@@ -1,0 +1,44 @@
+# ProteomeLM Core Dependencies
+# =================================
+
+# Deep Learning Framework
+torch>=2.0.0
+transformers>=4.21.0
+accelerate>=0.20.0
+
+# Scientific Computing
+numpy>=1.21.0
+pandas>=1.5.0
+
+# Biological Data
+biopython>=1.79
+
+# Configuration and Utilities
+PyYAML>=6.0
+requests>=2.28.0
+tqdm>=4.64.0
+
+# Training and Monitoring (Optional)
+wandb>=0.15.0
+psutil>=5.8.0
+
+# Hugging Face Integration
+huggingface-hub>=0.15.0
+datasets>=2.0.0
+tokenizers>=0.13.0
+safetensors>=0.3.0
+
+# Optional: Development Dependencies
+# Uncomment the following for development/notebook environments:
+ipython>=8.0.0
+jupyter>=1.0.0
+matplotlib>=3.5.0
+scikit-learn>=1.1.0
+
+# Optional: Advanced Training
+# Uncomment for distributed training and optimization:
+deepspeed>=0.9.0
+einops>=0.6.0
+
+# Note: For CUDA support, install PyTorch with CUDA from:
+# https://pytorch.org/get-started/locally/

@@ -1,0 +1,110 @@
+# ===================================================================
+#                    ProteomeLM Configuration File
+# ===================================================================
+# 
+# This configuration file defines all training and model parameters
+# for ProteomeLM. The file is organized into logical sections for
+# easy modification and experimentation.
+#
+# Available model sizes: XS, S, M, L
+# - XS: 128 dim, 6 layers,  8 heads  (~20M parameters)
+# - S:  512 dim, 6 layers,  8 heads  (~50M parameters)  
+# - M:  768 dim, 12 layers, 12 heads (~150M parameters)
+# - L:  1024 dim, 24 layers, 16 heads (~400M parameters)
+# ===================================================================
+
+# ===================================================================
+# EXPERIMENT CONFIGURATION
+# ===================================================================
+namedir: "ProteomeLM-S"                    # Experiment name/directory
+output_dir: "output/"                      # Base output directory
+description: "ProteomeLM small model training"  # Experiment description
+seed: 42                                   # Random seed for reproducibility
+
+# ===================================================================
+# MODEL ARCHITECTURE 
+# ===================================================================
+# Core architecture parameters (corresponds to ProteomeLM-S)
+input_size: 1152                          # ESM-C embedding dimension
+dim: 512                                  # Model hidden dimension
+hidden_dim: 512                           # FFN hidden dimension
+n_layers: 6                               # Number of transformer layers
+n_heads: 8                                # Number of attention heads
+n_inner: null                             # FFN inner dim (default: 4x dim)
+max_length: 16000                         # Maximum sequence length
+
+# Advanced model settings
+use_cache: true                           # Cache key/values for faster inference
+gradient_checkpointing: false             # Enable to reduce memory usage
+attn_implementation: "flash_attention_2"  # Attention implementation
+
+# Data types and precision
+dtype: "bfloat16"                         # Model weight data type
+torch_dtype: "bfloat16"                   # PyTorch tensor data type
+mixed_precision: true                     # Enable mixed precision training
+
+# ===================================================================
+# TRAINING CONFIGURATION
+# ===================================================================
+# Training duration
+num_epochs: 2000                          # Maximum training epochs
+max_steps: 1000000                        # Maximum training steps (overrides epochs)
+
+# Batch size and accumulation
+batch_size: 16                            # Batch size per device
+gradient_accumulation_steps: 1            # Steps to accumulate gradients
+eval_accumulation_steps: 1                # Steps to accumulate during evaluation
+dataloader_num_workers: 8                 # Number of data loading workers
+pin_memory: true                          # Pin memory for faster GPU transfer
+prefetch_factor: 2                        # Number of batches to prefetch
+
+# Learning rate and optimization
+learning_rate: 0.0003                     # Initial learning rate
+beta1: 0.9                                # AdamW beta1 parameter
+beta2: 0.999                              # AdamW beta2 parameter
+weight_decay: 0.01                        # Weight decay (L2 regularization)
+
+# Learning rate scheduling
+scheduler: "cosine"                       # Scheduler type: cosine, linear, constant
+warmup_steps: 500                         # Number of warmup steps
+
+# Gradient and stability
+max_grad_norm: 1.0                        # Gradient clipping threshold
+loss_choice: "polar"                      # Loss function: mse, cosine, polar
+
+# ===================================================================
+# DATA CONFIGURATION
+# ===================================================================
+# Data paths
+db_path: "/data2/common/proteomelm/training"  # Path to OrthoDB database
+
+# Data processing parameters
+min_taxid_size: 200                       # Minimum OrthoDB group size
+mask_fraction: 0.5                        # Fraction of sequences to mask
+
+
+# ===================================================================
+# EVALUATION AND LOGGING
+# ===================================================================
+# Evaluation settings
+eval_epochs: 1                            # Evaluate every N epochs
+
+# Saving and checkpointing
+save_epochs: 15                           # Save checkpoint every N epochs  
+save_total_limit: 5                       # Maximum number of checkpoints to keep
+
+# Logging configuration
+logging_steps: 10                         # Log metrics every N steps
+
+# ===================================================================
+# HARDWARE AND DISTRIBUTED TRAINING
+# ===================================================================
+# GPU configuration
+use_one_gpu: "0"                          # Single GPU ID, "-1" for all GPUs, "cpu" for CPU
+
+# ===================================================================
+# WEIGHTS & BIASES INTEGRATION
+# ===================================================================
+wandb_project: "proteomelm"               # W&B project name
+
+
