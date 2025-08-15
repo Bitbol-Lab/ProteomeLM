@@ -5,6 +5,7 @@
 torch>=2.0.0
 transformers>=4.21.0
 accelerate>=0.20.0
+esm>=3.2.1
 
 # Scientific Computing
 numpy>=1.21.0

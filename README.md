@@ -186,19 +186,6 @@ docker run --gpus all -v $(pwd):/workspace proteomelm:latest \
     python train.py --config configs/proteomelm.yaml
 ```
 
-## Installation
-
-
-```bash
-git clone https://github.com/Bitbol-Lab/ProteomeLM.git
-cd ProteomeLM
-pip install -r requirements.txt
-
-# Load local model
-model = ProteomeLMForMaskedLM.from_pretrained("weights/ProteomeLM-M")
-```
-
-
 ## Loading Models
 
 ```python
@@ -213,25 +200,6 @@ model_l = ProteomeLMForMaskedLM.from_pretrained("Bitbol-Lab/ProteomeLM-L")
 # From local weights (after git clone)
 model = ProteomeLMForMaskedLM.from_pretrained("weights/ProteomeLM-M")
 ```
-
-## Model Architecture
-
-ProteomeLM employs a novel transformer architecture designed for proteome-scale modeling:
-
-### Key Innovations
-
-- **Proteome-level Context**: Unlike single-protein models, processes entire proteomes.
-- **Hierarchical Training**: Leverages OrthoDB taxonomy for structured learning across evolutionary relationships.
-- **Attention-based PPI**: Naturally captures protein interactions in attention weights without explicit supervision.
-- **Scalable Architecture**: Efficient processing of variable-length proteomes.
-
-### Technical Details
-
-- **Input**: ESM-C protein embeddings (1152D) + ESM-C functional encodings (1152D)
-- **Architecture**: Transformer with modified attention for proteome-scale sequences
-- **Training**: Masked language modeling on proteome context with hierarchical sampling
-- **Loss Functions**: Polarization loss for better protein representation learning
-- **Optimization**: AdamW with cosine annealing and gradient clipping
 
 ## Citation
 
