@@ -3,6 +3,7 @@ Experiment management and execution for PPI analysis.
 """
 import logging
 import pandas as pd
+import pickle
 from pathlib import Path
 from typing import List, Union
 
@@ -11,7 +12,11 @@ from .data_processing import create_extractor
 from .evaluation import PerformanceEvaluator
 from .feature_extraction import PPIFeatureExtractor
 from .model import train_model_cv, test_model_cv
-import pickle
+
+# Import utilities
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from proteomelm.utils.io import ensure_dir
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,9 @@ class BaseExperimentRunner:
         results["checkpoint"] = checkpoint_number + experiment_config.corrector
 
         df = pd.concat([df, pd.DataFrame([results])], ignore_index=True)
+        
+        # Ensure output directory exists
+        ensure_dir(str(save_results_path.parent))
         df.to_csv(save_results_path, index=False)
         return df
 
@@ -71,7 +79,12 @@ class UnsupervisedExperimentRunner(BaseExperimentRunner):
         df = self._load_or_create_results_df(save_results_path)
 
         # Create interaction extractor based on dataset type
-        extractor_type = "bernett" if "goldstandard" in dataset_config.name else "dscript"
+        if "benchmark" in dataset_config.name:
+            extractor_type = "dscript"
+        elif "bernett" in dataset_config.name:
+            extractor_type = "bernett"
+        else:
+            extractor_type = "dscript"
         interaction_extractor = create_extractor(extractor_type)
 
         for checkpoint_number in experiment_config.checkpoint_numbers:
@@ -86,7 +99,11 @@ class UnsupervisedExperimentRunner(BaseExperimentRunner):
                 encoded_genome_file=dataset_config.encoded_genome_file,
                 save_path=dataset_config.save_path,
                 reload_if_possible=experiment_config.reload_if_possible,
-                include_all_hidden_states=False  # Not needed for unsupervised
+                include_all_hidden_states=False,  # Not needed for unsupervised
+                orthodb_db_path=dataset_config.orthodb_db_path,
+                orthodb_tsv_path=dataset_config.orthodb_tsv_path,
+                orthodb_min_group_size=dataset_config.orthodb_min_group_size,
+                orthodb_fetch_online=dataset_config.orthodb_fetch_online,
             )
 
             # Extract features
@@ -149,7 +166,11 @@ class UnsupervisedExperimentRunner(BaseExperimentRunner):
                     encoded_genome_file=species_dir / "dump_dict_esm_dscript.pt",
                     save_path=species_dir / "dump_dict.pkl",
                     reload_if_possible=experiment_config.reload_if_possible,
-                    include_all_hidden_states=False  # Not needed for unsupervised
+                    include_all_hidden_states=False,  # Not needed for unsupervised
+                    orthodb_db_path=dataset_config.orthodb_db_path if 'dataset_config' in locals() else None,
+                    orthodb_tsv_path=dataset_config.orthodb_tsv_path if 'dataset_config' in locals() else None,
+                    orthodb_min_group_size=dataset_config.orthodb_min_group_size if 'dataset_config' in locals() else 0,
+                    orthodb_fetch_online=dataset_config.orthodb_fetch_online if 'dataset_config' in locals() else True,
                 )
 
                 self._extract_features(extraction_config, interaction_extractor)
@@ -206,7 +227,12 @@ class SupervisedExperimentRunner(BaseExperimentRunner):
         df = self._load_or_create_results_df(save_results_path)
 
         # Create interaction extractor based on dataset type
-        extractor_type = "bernett" if "goldstandard" in dataset_config.name else "dscript"
+        if "benchmark" in dataset_config.name:
+            extractor_type = "dscript"
+        elif "bernett" in dataset_config.name:
+            extractor_type = "bernett"
+        else:
+            extractor_type = "dscript"
         interaction_extractor = create_extractor(extractor_type)
 
         for checkpoint_number in experiment_config.checkpoint_numbers:
@@ -229,7 +255,11 @@ class SupervisedExperimentRunner(BaseExperimentRunner):
                 encoded_genome_file=dataset_config.encoded_genome_file,
                 save_path=dataset_config.save_path,
                 reload_if_possible=experiment_config.reload_if_possible,
-                include_all_hidden_states=True  # Needed for supervised
+                include_all_hidden_states=True,  # Needed for supervised
+                orthodb_db_path=dataset_config.orthodb_db_path,
+                orthodb_tsv_path=dataset_config.orthodb_tsv_path,
+                orthodb_min_group_size=dataset_config.orthodb_min_group_size,
+                orthodb_fetch_online=dataset_config.orthodb_fetch_online,
             )
 
             # Extract features
@@ -249,7 +279,7 @@ class SupervisedExperimentRunner(BaseExperimentRunner):
             if supervised_keys:
                 logger.info(f"Supervised results for checkpoint {checkpoint_number + experiment_config.corrector}:")
                 # Group by feature combination and show mean performance
-                feature_combinations = set(k.split('_')[2] for k in supervised_keys if 'AUPR' in k)
+                feature_combinations = set('_'.join(k.split(', ')[2].split('_')[:-1]) for k in supervised_keys if 'AUPR' in k)
                 for combo in feature_combinations:
                     aupr_values = [results[k] for k in supervised_keys if f"AUPR, Supervised, {combo}" in k]
                     if aupr_values:
@@ -415,7 +445,7 @@ class SupervisedExperimentRunner(BaseExperimentRunner):
 
                     # Save model if requested
                     if save_models and checkpoint_models_dir is not None:
-                        checkpoint_models_dir.mkdir(parents=True, exist_ok=True)
+                        ensure_dir(str(checkpoint_models_dir))
                         model_name = f"cross_species_{feature_combo}_replica_{replica}"
                         model_path = checkpoint_models_dir / f"{model_name}.pt"
 
@@ -505,9 +535,13 @@ class CombinedExperimentRunner(BaseExperimentRunner):
         logger.info(f"Starting combined experiment for {experiment_config.model_name} on {dataset_config.name}")
 
         df = self._load_or_create_results_df(save_results_path)
-
         # Create interaction extractor based on dataset type
-        extractor_type = "bernett" if "goldstandard" in dataset_config.name else "dscript"
+        if "benchmark" in dataset_config.name:
+            extractor_type = "dscript"
+        elif "bernett" in dataset_config.name:
+            extractor_type = "bernett"
+        else:
+            extractor_type = "dscript"
         interaction_extractor = create_extractor(extractor_type)
 
         for checkpoint_number in experiment_config.checkpoint_numbers:
@@ -530,7 +564,11 @@ class CombinedExperimentRunner(BaseExperimentRunner):
                 encoded_genome_file=dataset_config.encoded_genome_file,
                 save_path=dataset_config.save_path,
                 reload_if_possible=experiment_config.reload_if_possible,
-                include_all_hidden_states=True  # Needed for supervised
+                include_all_hidden_states=True,  # Needed for supervised
+                orthodb_db_path=dataset_config.orthodb_db_path,
+                orthodb_tsv_path=dataset_config.orthodb_tsv_path,
+                orthodb_min_group_size=dataset_config.orthodb_min_group_size,
+                orthodb_fetch_online=dataset_config.orthodb_fetch_online,
             )
 
             # Extract features
@@ -554,7 +592,7 @@ class CombinedExperimentRunner(BaseExperimentRunner):
             # Log supervised results
             supervised_keys = [k for k in results.keys() if "Supervised" in k and "AUPR" in k]
             if supervised_keys:
-                feature_combinations = set(k.split('_')[2] for k in supervised_keys)
+                feature_combinations = set('_'.join(k.split(', ')[2].split('_')[:-1]) for k in supervised_keys)
                 for combo in feature_combinations:
                     aupr_values = [results[k] for k in supervised_keys if f"AUPR, Supervised, {combo}" in k]
                     if aupr_values:

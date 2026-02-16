@@ -16,3 +16,13 @@ lora_finetuned_model
 weights
 *.log
 *.gz
+work
+*cache*
+experiments/differential_interactomes_old
+experiments/differential_interactomes/data
+experiments/examples/data
+experiments/ablations/data
+notebooks/temp*
+*.png
+*.svg
+*.sh

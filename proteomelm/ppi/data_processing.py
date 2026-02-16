@@ -7,6 +7,11 @@ from typing import Dict, List, Tuple, Union
 
 import torch
 
+# Import utilities
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from proteomelm.utils.io import parse_fasta
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +30,13 @@ class FastaProcessor:
         Returns:
             Dictionary mapping protein identifiers to sequence indices
         """
+        # Use utility to parse FASTA
+        sequences = parse_fasta(str(fasta_path))
         index_map = {}
-        index = 0
-
+        
+        # Also parse comma-separated identifiers in headers
         with open(fasta_path, "r") as fasta_file:
+            index = 0
             for line in fasta_file:
                 if line.startswith(">"):
                     # Extract sequence identifiers (comma-separated)
@@ -55,17 +63,18 @@ class FastaProcessor:
             tsv_files: List of TSV file paths
             fasta_file: Output FASTA file path
         """
-        with open(fasta_file, "w") as output_file:
-            labels = set()
-            for tsv_file in tsv_files:
-                with open(tsv_file, "r") as input_file:
-                    for line in input_file:
-                        label, seq = line.strip().split("\t")[:2]
-                        if label not in labels:
-                            labels.add(label)
-                            output_file.write(f">{label}\n{seq}\n")
-
-        logger.info(f"Converted {len(tsv_files)} TSV files to FASTA with {len(labels)} unique sequences")
+        sequences = {}
+        for tsv_file in tsv_files:
+            with open(tsv_file, "r") as input_file:
+                for line in input_file:
+                    label, seq = line.strip().split("\t")[:2]
+                    if label not in sequences:
+                        sequences[label] = seq
+        
+        # Use utility to write FASTA
+        from proteomelm.utils.io import write_fasta
+        write_fasta(sequences, fasta_file)
+        logger.info(f"Converted {len(tsv_files)} TSV files to FASTA with {len(sequences)} unique sequences")
 
 
 class InteractionExtractor:
@@ -194,7 +203,7 @@ def create_extractor(dataset_type: str) -> InteractionExtractor:
     Create an appropriate interaction extractor for the given dataset type.
 
     Args:
-        dataset_type: Type of dataset ('dscript' or 'goldstandard')
+        dataset_type: Type of dataset ('dscript' or 'bernett')
 
     Returns:
         Appropriate InteractionExtractor instance
@@ -205,5 +214,6 @@ def create_extractor(dataset_type: str) -> InteractionExtractor:
         return DScriptExtractor(fasta_processor)
     elif dataset_type.lower() == "bernett":
         return BernettExtractor(fasta_processor)
+    
     else:
         raise ValueError(f"Unknown dataset type: {dataset_type}")

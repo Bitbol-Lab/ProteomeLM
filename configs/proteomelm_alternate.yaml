@@ -16,7 +16,7 @@
 # ===================================================================
 # EXPERIMENT CONFIGURATION
 # ===================================================================
-namedir: "ProteomeLM-S"                    # Experiment name/directory
+namedir: "ProteomeLM-S-alternate"                    # Experiment name/directory
 output_dir: "output/"                      # Base output directory
 description: "ProteomeLM small model training"  # Experiment description
 seed: 42                                   # Random seed for reproducibility
@@ -51,7 +51,7 @@ num_epochs: 500                          # Maximum training epochs
 max_steps: 1000000                        # Maximum training steps (overrides epochs)
 
 # Batch size and accumulation
-batch_size: 16                            # Batch size per device
+batch_size: 32                            # Batch size per device
 gradient_accumulation_steps: 1            # Steps to accumulate gradients
 eval_accumulation_steps: 1                # Steps to accumulate during evaluation
 dataloader_num_workers: 8                 # Number of data loading workers
@@ -76,7 +76,7 @@ loss_choice: "polar"                      # Loss function: mse, cosine, polar
 # DATA CONFIGURATION
 # ===================================================================
 # Data paths
-db_path: "/data2/common/proteomelm/training"  # Path to OrthoDB database
+db_path: "/home/malbrank/proteomelm/data/"  # Path to OrthoDB database
 
 # Data processing parameters
 min_taxid_size: 200                       # Minimum OrthoDB group size

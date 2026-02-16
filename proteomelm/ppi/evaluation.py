@@ -13,6 +13,7 @@ import torch
 from sklearn.decomposition import PCA
 from sklearn.metrics import average_precision_score, roc_auc_score
 from proteomelm.ppi.model import train_model_cv, test_model_cv
+from proteomelm.utils.io import ensure_dir
 
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,7 @@ class PerformanceEvaluator:
                 models_save_dir = Path("trained_models")
             else:
                 models_save_dir = Path(models_save_dir)
-            models_save_dir.mkdir(parents=True, exist_ok=True)
+            ensure_dir(str(models_save_dir))
             logger.info(f"Will save trained models to: {models_save_dir}")
 
         # Convert tensors to numpy arrays
@@ -194,18 +195,6 @@ class PerformanceEvaluator:
         X = {}
         for k in ["train", "val", "test"]:
             X[k] = self._prepare_feature_combinations(dump_dict[k], d, self.d_esm)
-
-        # Add per-layer ProteomeLM features
-        """n_layers = len(dump_dict["test"]["all_representations"])
-        D = dump_dict["test"]["all_representations"].size(-1) // 2
-        for k in ["train", "val", "test"]:
-            reprs = dump_dict[k]["all_representations"].view(-1, n_layers + 1, 2 * D).float().numpy()
-            for i in range(n_layers):
-                X[k][f"ProteomeLM-Layer{i + 1}"] = {
-                    "edges": dump_dict[k]["A"],
-                    "x1": reprs[:, i, :D],
-                    "x2": reprs[:, i, D:]
-                }"""
 
         # Prepare labels
         y = {}
@@ -321,7 +310,25 @@ class PerformanceEvaluator:
         Returns:
             Dictionary containing different feature combinations
         """
-        combinations = {
+        combinations = {}
+        
+        # Handle per-layer representations
+        # Shape is (n_layers, n_samples, 2*hidden_dim) where hidden_dim may vary per layer
+        if data["all_representations"] is not None:
+            print(f"all_representations shape: {data['all_representations'].shape}")
+            n_layers = data["all_representations"].shape[0]
+            
+            for i in range(n_layers):
+                layer_repr = data["all_representations"][i].float().numpy()  # Shape: (n_samples, 2*hidden_dim)
+                d_layer = layer_repr.shape[-1] // 2  # Split dimension for this specific layer
+                combinations[f"ProteomeLM-Layer{i + 1}"] = {
+                    "edges": data["A"],
+                    "x1": layer_repr[:, :d_layer],
+                    "x2": layer_repr[:, d_layer:]
+                }
+
+        
+        combinations.update({
             "ProteomeLM+Att": {
                 "edges": data["A"],
                 "x1": data["repr_proteomelm"][:, :d],
@@ -357,6 +364,7 @@ class PerformanceEvaluator:
                 "x1": data["repr_esm"][:, :d_esm],
                 "x2": data["repr_esm"][:, d_esm:]
             }
-        }
+        })
+        
 
         return combinations

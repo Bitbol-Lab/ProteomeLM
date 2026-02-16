@@ -3,12 +3,18 @@ Feature extraction pipeline for protein-protein interaction analysis.
 """
 import logging
 import pickle
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 from .model import prepare_ppi
 from .config import ExtractionConfig
 from .data_processing import InteractionExtractor
+
+# Import utilities
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from proteomelm.utils.io import ensure_dir
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +59,11 @@ class PPIFeatureExtractor:
             use_odb=False,
             include_attention=self.config.include_attention,
             include_all_hidden_states=self.config.include_all_hidden_states,
-            reload_if_possible=self.config.reload_if_possible
+            reload_if_possible=self.config.reload_if_possible,
+            orthodb_db_path=str(self.config.orthodb_db_path) if self.config.orthodb_db_path else None,
+            orthodb_tsv_path=str(self.config.orthodb_tsv_path) if self.config.orthodb_tsv_path else None,
+            orthodb_min_group_size=self.config.orthodb_min_group_size,
+            orthodb_fetch_online=self.config.orthodb_fetch_online,
         )
 
         # Extract interaction indices and labels
@@ -74,6 +84,8 @@ class PPIFeatureExtractor:
 
         # Save results if path is provided
         if self.config.save_path:
+            # Ensure output directory exists
+            ensure_dir(str(Path(self.config.save_path).parent))
             self._save_results(dump_dict)
 
         logger.info("PPI feature extraction completed successfully")
@@ -205,14 +217,14 @@ class PPIFeatureExtractor:
         all_representations_split = None
         if all_representations is not None:
             all_representations_split = torch.cat([
-                torch.cat([all_representations[:, i0], all_representations[:, i1]], dim=-1)
+                torch.cat([all_representations[:, None, i0], all_representations[:, None, i1]], dim=-1)
                 for i0, i1 in indices
-            ], dim=0)
+            ], dim=1)
 
         attention_split = None
         if attention_matrix is not None:
             attention_split = attention_matrix[cumsum:cumsum + len(indices)].float().contiguous()
-
+        print(all_representations_split.shape, repr_proteomelm_split.shape)
         return {
             "A": attention_split,
             "repr_proteomelm": repr_proteomelm_split,

@@ -6,9 +6,10 @@ from pathlib import Path
 
 from .config import (
     DSCRIPT_SPECIES,
-    GOLDSTANDARD_CONFIG,
+    BERNETT_CONFIG,
     ExperimentConfig,
-    get_dscript_config
+    get_dscript_config,
+    get_benchmark_config
 )
 from .experiment_runner import BatchExperimentRunner
 
@@ -28,48 +29,48 @@ def create_model_configs() -> dict:
     base_configs = {
         "ProteomeLM-XS": ExperimentConfig(
             model_name="ProteomeLM-XS",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-XS"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-XS"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210]
         ),
         "ProteomeLM-S": ExperimentConfig(
             model_name="ProteomeLM-S",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-S"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-S"),
             checkpoint_numbers=[210]
         ),
         "ProteomeLM-M": ExperimentConfig(
             model_name="ProteomeLM-M",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-M"),
-            checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210]
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-M"),
+            checkpoint_numbers=[210]
         ),
         "ProteomeLM-L": ExperimentConfig(
             model_name="ProteomeLM-L",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-L"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-L"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210]
         ),
         "ProteomeLM-Mini-Cosine": ExperimentConfig(
             model_name="ProteomeLM-Mini-Cosine",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-Mini-Kuma-Cosine"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-Mini-Kuma-Cosine"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210]
         ),
         "ProteomeLM-Mini-MSE": ExperimentConfig(
             model_name="ProteomeLM-Mini-MSE",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-Mini-Kuma-MSE"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-Mini-Kuma-MSE"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210]
         ),
 
         "ProteomeLM-Mini-Eukaryotes-Pretrain": ExperimentConfig(
             model_name="ProteomeLM-Mini-Eukaryotes-Pretrain",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-Mini-Kuma-Eukaryotes-Pretrain"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-Mini-Kuma-Eukaryotes-Pretrain"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345]
         ),
         "ProteomeLM-Mini-Eukaryotes-Scratch": ExperimentConfig(
             model_name="ProteomeLM-Mini-Eukaryotes-Scratch",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-Mini-Kuma-Eukaryotes-Scratch"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-Mini-Kuma-Eukaryotes-Scratch"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345]
         ),
         "ProteomeLM-Mini-LongContext": ExperimentConfig(
             model_name="ProteomeLM-Mini-Kuma-LongContext",
-            base_path=Path("/data2/common/proteomelm/ProteomeLM-Mini-Kuma-LongContext"),
+            base_path=Path("/data1/malbrank/proteomelm/weights/ProteomeLM-Mini-Kuma-LongContext"),
             checkpoint_numbers=[15, 30, 45, 60, 75, 90, 105, 120]
         )
     }
@@ -77,9 +78,9 @@ def create_model_configs() -> dict:
     return base_configs
 
 
-def run_goldstandard_experiments():
-    """Run experiments on the gold-standard dataset."""
-    logger.info("Starting gold-standard experiments")
+def run_bernett_experiments():
+    """Run experiments on the Bernett dataset."""
+    logger.info("Starting Bernett experiments")
 
     model_configs = create_model_configs()
     runner = BatchExperimentRunner()
@@ -92,13 +93,13 @@ def run_goldstandard_experiments():
     # You can choose experiment type: "unsupervised", "supervised", or "combined"
     runner.run_model_comparison(
         model_configs=configs_to_run,
-        dataset_config=GOLDSTANDARD_CONFIG,
-        save_results_path=GOLDSTANDARD_CONFIG.results_path,
+        dataset_config=BERNETT_CONFIG,
+        save_results_path=BERNETT_CONFIG.results_path,
         experiment_type="combined",  # Run both unsupervised and supervised
         n_replicas=1
     )
 
-    logger.info("Gold-standard experiments completed")
+    logger.info("Bernettexperiments completed")
 
 
 def run_dscript_experiments():
@@ -113,7 +114,7 @@ def run_dscript_experiments():
 
     configs_to_run = [model_configs[name] for name in selected_models if name in model_configs]
 
-    base_data_path = Path("/data2/malbrank/proteomelm/dscript/")
+    base_data_path = Path("/data1/malbrank/proteomelm/dscript/")
     save_results_path = base_data_path / "checkpoint_screening.csv"
 
     # Cross-species experiments can now be either unsupervised or supervised
@@ -148,7 +149,7 @@ def run_single_species_experiments():
         logger.info(f"Running experiments for species: {species}")
 
         species_config = get_dscript_config(species)
-        selected_models = ["ProteomeLM-S"]  # Customize as needed
+        selected_models = ["ProteomeLM-M"]  # Customize as needed
 
         configs_to_run = [model_configs[name] for name in selected_models if name in model_configs]
 
@@ -164,14 +165,89 @@ def run_single_species_experiments():
     logger.info("Single species experiments completed")
 
 
+def run_benchmark_experiments():
+    """
+    Run experiments on benchmark datasets created with build_four_way_benchmark.py.
+    
+    Benchmark datasets use high-confidence IntAct interactions with sequence-similarity-based
+    train/val/test splits (max 40% identity) in DScript-compatible format.
+    """
+    logger.info("Starting benchmark experiments")
+
+    model_configs = create_model_configs()
+    runner = BatchExperimentRunner()
+
+    # Select which models to run (customize as needed)
+    selected_models = ["ProteomeLM-S","ProteomeLM-M"]  # Add more models as needed
+
+    configs_to_run = [model_configs[name] for name in selected_models if name in model_configs]
+
+    # You can choose experiment type: "unsupervised", "supervised", or "combined"
+    runner.run_model_comparison(
+    model_configs=configs_to_run,
+    dataset_config=get_dscript_config("ecoli"),
+    save_results_path=get_dscript_config("ecoli").results_path,
+    experiment_type="unsupervised",
+    compare_orthodb=True,
+    comparison_output_dir=get_dscript_config("ecoli").env_dir / "orthodb_compare"
+    )   
+    runner.run_model_comparison(
+    model_configs=configs_to_run,
+    dataset_config=get_dscript_config("yeast"),
+    save_results_path=get_dscript_config("yeast").results_path,
+    experiment_type="unsupervised",
+    compare_orthodb=True,
+    comparison_output_dir=get_dscript_config("yeast").env_dir / "orthodb_compare"
+    )   
+    runner.run_model_comparison(
+    model_configs=configs_to_run,
+    dataset_config=get_dscript_config("human"),
+    save_results_path=get_dscript_config("human").results_path,
+    experiment_type="unsupervised",
+    compare_orthodb=True,
+    comparison_output_dir=get_dscript_config("human").env_dir / "orthodb_compare"
+    )   
+
+
+    """runner.run_model_comparison(
+        model_configs=configs_to_run,
+        dataset_config=get_benchmark_config("yeast"),
+        save_results_path=get_benchmark_config("yeast").results_path,
+        experiment_type="supervised",  # Run both unsupervised and supervised
+        n_replicas=5
+    )
+    runner.run_model_comparison(
+        model_configs=configs_to_run,
+        dataset_config=get_benchmark_config("human"),
+        save_results_path=get_benchmark_config("human").results_path,
+        experiment_type="supervised",  # Run both unsupervised and supervised
+        n_replicas=5
+    )
+
+    runner.run_model_comparison(
+        model_configs=configs_to_run,
+        dataset_config=get_benchmark_config("ecoli"),
+        save_results_path=get_benchmark_config("ecoli").results_path,
+        experiment_type="supervised",  # Run both unsupervised and supervised
+        n_replicas=5
+    )"""
+
+
+
+    logger.info("Benchmark experiments completed")
+
+
+
+
 def main():
     """Main entry point for running experiments."""
     logger.info("Starting PPI experiments")
 
     # Uncomment the experiments you want to run
-    # run_goldstandard_experiments()
-    run_dscript_experiments()
+    # run_bernett_experiments()
+    # run_dscript_experiments()
     # run_single_species_experiments()
+    run_benchmark_experiments()
 
     logger.info("All experiments completed")
 

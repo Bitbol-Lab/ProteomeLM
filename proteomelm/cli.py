@@ -9,10 +9,11 @@ from typing import List, Dict, Any
 import torch
 import yaml
 
-from .utils import setup_logging
 from .train import run_training
+from .utils import setup_logging
 
 logger = logging.getLogger(__name__)
+
 
 
 def setup_distributed(use_one_gpu: str = "-1") -> int:

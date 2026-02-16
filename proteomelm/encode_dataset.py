@@ -25,7 +25,7 @@ from Bio import SeqIO
 from tqdm import tqdm
 from esm.models.esmc import ESMC
 
-from .utils import average_representation
+from .utils.embedding import average_representation
 
 
 def setup_logging(level: str = "INFO", log_file: Optional[str] = None):

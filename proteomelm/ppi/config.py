@@ -19,6 +19,10 @@ class ExtractionConfig:
     reload_if_possible: bool = True
     esm_device: str = "cuda:0"
     proteomelm_device: str = "cpu"
+    orthodb_db_path: Optional[Path] = Path("/data1/malbrank/proteomelm/training")
+    orthodb_tsv_path: Optional[Path] = None
+    orthodb_min_group_size: int = 10
+    orthodb_fetch_online: bool = True
 
 
 @dataclass
@@ -38,6 +42,10 @@ class DatasetConfig:
     base_dir: Path
     fasta_file: str
     experiment_name: str
+    orthodb_db_path: Optional[Path] = Path("/data1/malbrank/proteomelm/training")
+    orthodb_tsv_path: Optional[Path] = None
+    orthodb_min_group_size: int = 10
+    orthodb_fetch_online: bool = True
 
     @property
     def env_dir(self) -> Path:
@@ -59,19 +67,29 @@ class DatasetConfig:
 # Predefined dataset configurations
 BERNETT_CONFIG = DatasetConfig(
     name="bernett",
-    base_dir=Path("/data2/malbrank/proteomelm/bernett/"),
-    fasta_file="human_goldstandard.faa",
-    experiment_name="goldstandard"
+    base_dir=Path("/data1/malbrank/proteomelm/bernett"),
+    fasta_file="human_gold.faa",
+    experiment_name="bernett"
 )
 
 DSCRIPT_SPECIES = ["human", "ecoli", "yeast", "fly", "worm", "mouse"]
+
+
+def get_benchmark_config(species: str) -> DatasetConfig:
+    """Get configuration for a specific DScript species."""
+    return DatasetConfig(
+        name=f"benchmark_{species}",
+        base_dir=Path(f"/data1/malbrank/proteomelm/benchmark/{species}/"),
+        fasta_file=f"{species}.faa",
+        experiment_name="benchmark"
+    )
 
 
 def get_dscript_config(species: str) -> DatasetConfig:
     """Get configuration for a specific DScript species."""
     return DatasetConfig(
         name=f"dscript_{species}",
-        base_dir=Path(f"/data2/malbrank/proteomelm/dscript/{species}/"),
+        base_dir=Path(f"/data1/malbrank/proteomelm/dscript/{species}/"),
         fasta_file=f"{species}.faa",
         experiment_name="dscript"
     )

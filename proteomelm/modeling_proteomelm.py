@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Union, Dict, List
 
 import torch
-from torch.nn import CrossEntropyLoss
 from torch import nn
 
 from transformers import DistilBertForMaskedLM, DistilBertConfig, DistilBertPreTrainedModel, PretrainedConfig, \
@@ -276,6 +275,8 @@ class ProteomeLMForMaskedLM(DistilBertForMaskedLM):
             group_embeds = inputs_embeds.clone()
         if masked_tokens is not None:
             mask = masked_tokens.bool()
+            # Clone to avoid in-place modification of a view created under no_grad.
+            inputs_embeds = inputs_embeds.clone()
             inputs_embeds[mask] = group_embeds[mask].clone()
             root = group_embeds[mask].clone()
         else:
@@ -333,123 +334,3 @@ class ProteomeLMForMaskedLM(DistilBertForMaskedLM):
             attentions=transformer_outputs.attentions,
         )
 
-
-@add_start_docstrings(
-    """
-    ProteomeLM Model with a token classification head on top (a linear layer on top of the hidden-states output
-    for each token) e.g. for Named-Entity Recognition (NER) tasks.
-    """,
-    PROTEOMELM_START_DOCSTRING,
-)
-class ProteomeLMForTokenClassification(DistilBertPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.num_labels = config.num_labels
-
-        self.proteomelm = ProteomeLMModel(config)  # Base Transformer model (no token embeddings inside)
-        self.embedding_main = nn.Linear(config.input_size, config.dim)
-        self.embedding_encoder = nn.Linear(config.input_size, config.dim)
-        self.dropout = nn.Dropout(config.dropout)
-        self.classifier = nn.Linear(config.dim, config.num_labels)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(PROTEOMELM_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=TokenClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        group_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[TokenClassifierOutput, Tuple[torch.Tensor, ...]]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        # Prepare attention mask if not provided
-        if attention_mask is None:
-            attention_mask = torch.ones(input_shape, device=device)
-
-        # If group_embeds is not provided, use inputs_embeds (or input_ids cast to float) as group_embeds
-        if inputs_embeds is None:
-            # If only input_ids were provided, we convert them to floats for embedding layers
-            inputs_embeds = input_ids.to(device=device, dtype=torch.float32)
-        if group_embeds is None:
-            group_embeds = inputs_embeds.clone()
-
-        # Compute input embeddings by projecting the input features to hidden dim and adding group embeddings
-        inputs_embeds_main = self.embedding_main(inputs_embeds)
-        inputs_embeds_enc = self.embedding_encoder(group_embeds)
-        combined_embeds = inputs_embeds_main + inputs_embeds_enc
-
-        # Forward pass through the ProteomeLM transformer
-        outputs = self.proteomelm(
-            input_ids=None,
-            inputs_embeds=combined_embeds,
-            attention_mask=attention_mask,
-            head_mask=head_mask,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        # The last hidden state is the first element of outputs (either a tuple or BaseModelOutput)
-        sequence_output = outputs[0]  # shape: (batch_size, sequence_length, hidden_size)
-
-        # Apply dropout and compute logits
-        sequence_output = self.dropout(sequence_output)
-        logits = self.classifier(sequence_output)  # shape: (batch_size, sequence_length, num_labels)
-
-        loss = None
-        if labels is not None:
-            # Flatten the predictions and true labels for computing loss
-            loss_fct = CrossEntropyLoss()
-            if attention_mask is not None:
-                # Only compute loss on active (non-padded) tokens
-                active_loss = attention_mask.view(-1) == 1
-                active_logits = logits.view(-1, self.num_labels)
-                active_labels = torch.where(
-                    active_loss,
-                    labels.view(-1),
-                    torch.tensor(loss_fct.ignore_index).type_as(labels)
-                )
-                loss = loss_fct(active_logits, active_labels)
-            else:
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-
-        if not return_dict:
-            # Return a tuple consistent with BaseModelOutput conventions
-            output = (logits,) + outputs[1:]
-            return ((loss,) + output) if loss is not None else output
-
-        # Return a TokenClassifierOutput (which is a ModelOutput, containing predictions and optional loss/hidden states/attentions)
-        return TokenClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
