@@ -40,6 +40,7 @@ optuna>=3.0.0
 # Uncomment for distributed training and optimization:
 deepspeed>=0.9.0
 einops>=0.6.0
+optuna>=3.0.0
 
 # Note: For CUDA support, install PyTorch with CUDA from:
 # https://pytorch.org/get-started/locally/
