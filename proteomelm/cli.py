@@ -6,28 +6,12 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-import torch
 import yaml
 
-from .train import run_training
+from .train import run_training, validate_config
 from .utils import setup_logging
 
 logger = logging.getLogger(__name__)
-
-
-
-def setup_distributed(use_one_gpu: str = "-1") -> int:
-    """Setup distributed training configuration."""
-    if int(use_one_gpu) >= 0:
-        import os
-        os.environ["CUDA_VISIBLE_DEVICES"] = use_one_gpu
-        rank = 0
-    else:
-        import torch.distributed as dist
-        dist.init_process_group(backend='nccl', init_method='env://')
-        torch.cuda.set_device(int(os.environ['LOCAL_RANK']))
-        rank = int(os.environ['LOCAL_RANK'])
-    return rank
 
 
 def load_config(config_paths: List[str]) -> Dict[str, Any]:
@@ -45,26 +29,6 @@ def load_config(config_paths: List[str]) -> Dict[str, Any]:
     return config
 
 
-def validate_config(config: Dict[str, Any]) -> None:
-    """Validate configuration parameters."""
-    required_keys = [
-        "batch_size", "learning_rate", "num_epochs",
-        "output_dir", "namedir", "dim", "n_layers", "n_heads"
-    ]
-
-    missing_keys = [key for key in required_keys if key not in config]
-    if missing_keys:
-        raise ValueError(f"Missing required configuration keys: {missing_keys}")
-
-    # Validate ranges
-    if config["batch_size"] <= 0:
-        raise ValueError("batch_size must be positive")
-    if config["learning_rate"] <= 0:
-        raise ValueError("learning_rate must be positive")
-    if config["num_epochs"] <= 0:
-        raise ValueError("num_epochs must be positive")
-
-
 def train_cli():
     """Command-line interface for training ProteomeLM."""
     parser = argparse.ArgumentParser(
@@ -76,7 +40,7 @@ def train_cli():
         "--config",
         type=str,
         nargs='+',
-        default=["configs/proteomelm.yaml"],
+        default=["configs/pretraining/proteomelm.yaml"],
         help="Path(s) to configuration YAML file(s)"
     )
     parser.add_argument(
@@ -105,8 +69,8 @@ def train_cli():
 
     args = parser.parse_args()
 
-    # Setup logging
-    setup_logging(level=getattr(logging, args.log_level))
+    # Setup logging (stdout + training.log in the working directory)
+    setup_logging(level=getattr(logging, args.log_level), log_file="training.log")
 
     try:
         # Load and validate configuration
@@ -131,7 +95,7 @@ def train_cli():
 if __name__ == "__main__":
     # This allows the CLI to be run as python -m proteomelm.cli
     if len(sys.argv) < 2:
-        print("Usage: python -m proteomelm.cli [train|encode|predict] [options]")
+        print("Usage: python -m proteomelm.cli train [options]")
         sys.exit(1)
 
     command = sys.argv[1]

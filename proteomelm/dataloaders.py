@@ -16,8 +16,9 @@ from typing import Dict, List, Tuple, Sequence, Optional
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader
 from transformers.trainer_pt_utils import IterableDataset
+
+from .utils.proteome import orthodb_group_vector_files
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +29,17 @@ _CACHE_LOCK = Lock()
 
 def _load_orthodb_data_once(db_path: str, min_taxid_size: int) -> Tuple[set, Dict]:
     """
-    Load OrthoDB data with caching and thread safety.
+    Load OrthoDB group vectors once per (db_path, min_taxid_size), with thread-safe caching.
 
     Args:
         db_path: Path to the database directory
-        min_taxid_size: Minimum taxonomic ID size filter
+        min_taxid_size: Minimum OrthoDB group-size threshold; group_vectors_{t}.pkl files
+            with t < min_taxid_size are skipped (see utils.proteome.orthodb_group_vector_files)
 
     Returns:
         Tuple of (orthodb_ids, orthodb_means)
 
     Raises:
-        FileNotFoundError: If required OrthoDB files are missing
         ValueError: If no valid data is found
     """
     global _GLOBAL_ORTHODB_CACHE
@@ -51,35 +52,10 @@ def _load_orthodb_data_once(db_path: str, min_taxid_size: int) -> Tuple[set, Dic
             logger.debug(f"Using cached OrthoDB data for {cache_key}")
             return _GLOBAL_ORTHODB_CACHE[cache_key]
 
-    # Define expected group vector files
-    group_vector_files = [
-        "group_vectors_0.pkl",
-        "group_vectors_10.pkl",
-        "group_vectors_50.pkl",
-        "group_vectors_200.pkl",
-    ]
-
     group_vectors = {}
     files_loaded = 0
 
-    for filename in group_vector_files:
-        file_path = os.path.join(db_path, filename)
-
-        # Extract count from filename
-        try:
-            count = int(filename.split("_")[-1].split(".")[0])
-        except (ValueError, IndexError) as e:
-            logger.warning(f"Could not parse count from filename {filename}: {e}")
-            continue
-
-        if count < min_taxid_size:
-            logger.debug(f"Skipping {filename} (count {count} < min_taxid_size {min_taxid_size})")
-            continue
-
-        if not os.path.exists(file_path):
-            logger.warning(f"OrthoDB file not found: {file_path}")
-            continue
-
+    for file_path in orthodb_group_vector_files(db_path, min_taxid_size):
         try:
             with open(file_path, "rb") as f:
                 file_data = pickle.load(f)
@@ -475,80 +451,3 @@ def get_shards_dataset(*args, **kwargs) -> ProteomeLMDataset:
         Initialized ProteomeLMDataset instance
     """
     return ProteomeLMDataset(*args, **kwargs)
-
-
-def create_dataloader(dataset: ProteomeLMDataset,
-                      batch_size: int = 16,
-                      num_workers: int = 0,
-                      pin_memory: bool = True,
-                      **kwargs) -> torch.utils.data.DataLoader:
-    """
-    Create a DataLoader for ProteomeLM training.
-
-    Args:
-        dataset: ProteomeLM dataset instance
-        batch_size: Number of samples per batch
-        num_workers: Number of worker processes for data loading
-        pin_memory: Whether to pin memory for faster GPU transfer
-        **kwargs: Additional arguments passed to DataLoader
-
-    Returns:
-        Configured DataLoader instance
-    """
-    collator = DataCollatorForProteomeLM()
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        collate_fn=collator,
-        **kwargs
-    )
-
-
-def clear_orthodb_cache():
-    """Clear the global OrthoDB cache to free memory."""
-    global _GLOBAL_ORTHODB_CACHE
-    with _CACHE_LOCK:
-        _GLOBAL_ORTHODB_CACHE.clear()
-        logger.info("Cleared OrthoDB cache")
-
-
-def get_dataset_info(db_path: str, dataset: str = "train") -> Dict[str, int]:
-    """
-    Get information about a dataset without loading it.
-
-    Args:
-        db_path: Path to the database directory
-        dataset: Dataset split name
-
-    Returns:
-        Dictionary with dataset statistics
-    """
-    dataset_dir = os.path.join(db_path, dataset)
-
-    if not os.path.exists(dataset_dir):
-        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
-
-    # Count shards and samples
-    shard_files = [f for f in os.listdir(dataset_dir) if f.startswith("shard_") and f.endswith(".tar")]
-
-    total_samples = 0
-    valid_shards = 0
-
-    for shard_file in shard_files:
-        shard_path = os.path.join(dataset_dir, shard_file)
-        try:
-            with tarfile.open(shard_path, 'r') as tar:
-                total_samples += len(tar.getmembers())
-                valid_shards += 1
-        except Exception as e:
-            logger.warning(f"Could not read shard {shard_file}: {e}")
-
-    return {
-        "total_shards": len(shard_files),
-        "valid_shards": valid_shards,
-        "total_samples": total_samples,
-        "avg_samples_per_shard": total_samples / valid_shards if valid_shards > 0 else 0,
-    }

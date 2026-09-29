@@ -1,0 +1,6 @@
+# abl7: seed dataset, inverted asymmetric masking (80/20), pathogen self-attention BLOCKED
+namedir: "ProteomeLM-HPI-S-abl7-seed-inv-block"
+mode: "0"            # seed split: 530 train / 59 eval pairs
+mask_fraction_H: 0.8
+mask_fraction_P: 0.2
+block_pathogen_self_attention: true

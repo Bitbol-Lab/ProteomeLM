@@ -7,11 +7,6 @@ from typing import Dict, List, Tuple, Union
 
 import torch
 
-# Import utilities
-import sys
-sys.path.append(str(Path(__file__).resolve().parents[2]))
-from proteomelm.utils.io import parse_fasta
-
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +25,9 @@ class FastaProcessor:
         Returns:
             Dictionary mapping protein identifiers to sequence indices
         """
-        # Use utility to parse FASTA
-        sequences = parse_fasta(str(fasta_path))
         index_map = {}
-        
-        # Also parse comma-separated identifiers in headers
+
+        # Headers may list several comma-separated identifiers for one sequence
         with open(fasta_path, "r") as fasta_file:
             index = 0
             for line in fasta_file:
@@ -53,28 +46,6 @@ class FastaProcessor:
 
         logger.info(f"Built index map with {len(index_map)} identifiers for {index} sequences")
         return index_map
-
-    @staticmethod
-    def tsv_to_fasta(tsv_files: List[str], fasta_file: str) -> None:
-        """
-        Convert TSV files to a single FASTA file.
-
-        Args:
-            tsv_files: List of TSV file paths
-            fasta_file: Output FASTA file path
-        """
-        sequences = {}
-        for tsv_file in tsv_files:
-            with open(tsv_file, "r") as input_file:
-                for line in input_file:
-                    label, seq = line.strip().split("\t")[:2]
-                    if label not in sequences:
-                        sequences[label] = seq
-        
-        # Use utility to write FASTA
-        from proteomelm.utils.io import write_fasta
-        write_fasta(sequences, fasta_file)
-        logger.info(f"Converted {len(tsv_files)} TSV files to FASTA with {len(sequences)} unique sequences")
 
 
 class InteractionExtractor:
@@ -157,7 +128,7 @@ class BernettExtractor(InteractionExtractor):
 
         index_pairs_dict, y_dict = {}, {}
 
-        for i, dataset in enumerate(["train", "val", "test"]):
+        for i, dataset in enumerate(["val", "train", "test"]):  # Note: Bernett's dataset uses val, train, test order
             interaction_file_pos = env_dir / f"Intra{i}_pos_rr.txt"
             interaction_file_neg = env_dir / f"Intra{i}_neg_rr.txt"
 

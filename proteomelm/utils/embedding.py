@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-Embedding computation utilities for ProteomeLM validation examples.
+Embedding computation utilities for ProteomeLM.
 
 This module provides shared functions for:
-- Computing ESM-C embeddings
+- Computing ESM-C embeddings (``build_genome_esmc``, used by ``proteomelm.ppi``)
 - Computing ProteomeLM contextualized embeddings
 - Extracting attention weights
-- Managing embedding caches
-
-Used by: paris.py, cct.py, ribosomes.py
+- Managing embedding caches (used by the experiments/examples scripts)
 """
 
 import os
@@ -41,6 +39,23 @@ def average_representation(output, input_ids, pad_token_id: int):
     output[~mask] = 0.0
     valid_counts = mask.sum(dim=1, keepdim=True).clamp(min=1)
     return output.sum(dim=1) / valid_counts
+
+
+def check_embeddings(embeddings: torch.Tensor, labels: List[str], device: str) -> None:
+    """Raise if any mean embedding is non-finite or exactly zero.
+
+    Neither occurs for a real protein, but a faulty GPU has been seen to return
+    all-zero (or NaN) ESM-C outputs without raising, which then flows silently
+    into every downstream ProteomeLM feature.
+    """
+    bad = ~torch.isfinite(embeddings).all(dim=1) | (embeddings == 0).all(dim=1)
+    if bad.any():
+        examples = [labels[i] for i in bad.nonzero().flatten()[:5].tolist()]
+        raise RuntimeError(
+            f"ESM-C returned zero or non-finite embeddings for {int(bad.sum())}/{len(labels)} "
+            f"sequences on device {device!r} (e.g. {examples}). This indicates a device/kernel "
+            f"fault, not bad input; rerun on another device."
+        )
 
 
 def prepare_model_esm(checkpoint: str, device: str) -> ESMC:
@@ -87,7 +102,7 @@ def encode_dataset_esmc(
         model: ESMC,
         fasta_file: Optional[Union[Path, str]] = None,
         data: Optional[Tuple[List[str], List[str]]] = None,
-        keep_hidden_layers: Optional[Tuple[int]] = (6, 12, 18, 24, 30),
+        keep_hidden_layers: Optional[Tuple[int, ...]] = None,
         device: str = "cpu",
 ) -> Dict[str, np.array]:
     r"""
@@ -96,7 +111,9 @@ def encode_dataset_esmc(
     Args:
         model (ESMC): The model to use for encoding.
         fasta_file (Union[Path, str]): Path to the FASTA file containing protein sequences.
-        keep_hidden_layers (Tuple[int]): Indices of hidden layers to keep.
+        keep_hidden_layers (Tuple[int, ...], optional): Indices of ESM-C hidden layers whose mean-pooled
+            representations are returned under ``hidden_states`` (``None``: skip them; the
+            ``inputs_embeds``/``group_embeds`` outputs are unaffected).
         device (str): Device to use for encoding (e.g., 'cuda' or 'cpu').
 
     Returns:
@@ -122,6 +139,8 @@ def encode_dataset_esmc(
     all_hidden_states = None
     all_embeddings = []
     max_number_of_tokens = 16000
+    sorted_indices = sorted(range(len(sequences)), key=lambda idx: len(sequences[idx]), reverse=True)
+    sorted_sequences = [sequences[idx] for idx in sorted_indices]
     
     current_batch = []
     current_num_tokens = 0
@@ -143,21 +162,25 @@ def encode_dataset_esmc(
         all_embeddings.append(average_representation(embeddings, input_ids, model.tokenizer.pad_token_id).detach().cpu())
         return all_hidden_states, all_embeddings
 
-    for i in tqdm(range(0, len(sequences)), desc="Encoding sequences"):
+    for i in tqdm(range(0, len(sorted_sequences)), desc="Encoding sequences"):
         # Prepare batch
         # empty cache
         torch.cuda.empty_cache()
-        if current_num_tokens + len(sequences[i]) > max_number_of_tokens:
+        if current_num_tokens + len(sorted_sequences[i]) > max_number_of_tokens:
             all_hidden_states, all_embeddings = run_batch(current_batch, all_hidden_states, all_embeddings)
             current_batch = []
             current_num_tokens = 0
-        current_batch.append(sequences[i])
-        current_num_tokens += len(sequences[i])
+        current_batch.append(sorted_sequences[i])
+        current_num_tokens += len(sorted_sequences[i])
 
     if len(current_batch) > 0:
         all_hidden_states, all_embeddings = run_batch(current_batch, all_hidden_states, all_embeddings)
-    all_hidden_states = [torch.cat(hiddens, 0) for hiddens in all_hidden_states] if all_hidden_states is not None else None
-    all_embeddings = torch.cat(all_embeddings, 0)
+    restore_order = torch.empty(len(sorted_indices), dtype=torch.long)
+    restore_order[torch.tensor(sorted_indices, dtype=torch.long)] = torch.arange(len(sorted_indices), dtype=torch.long)
+    all_hidden_states = [torch.cat(hiddens, 0)[restore_order] for hiddens in all_hidden_states] if all_hidden_states is not None else None
+    # Restore original FASTA order after length-sorted batching.
+    all_embeddings = torch.cat(all_embeddings, 0)[restore_order]
+    check_embeddings(all_embeddings, labels, device)
 
     # Step 3: Map labels to representations
     return {"group_embeds": all_embeddings,  # to avoid relying on ODB. TODO: rely on odb on the fly!
@@ -246,7 +269,6 @@ def compute_proteomelm_embeddings(
     
     cache_path = os.path.join(output_dir, f"{prefix}_proteomelm_embeddings.pt")
     attn_cache_path = os.path.join(output_dir, f"{prefix}_proteomelm_attentions.pt")
-    presoftmax_cache_path = os.path.join(output_dir, f"{prefix}_proteomelm_presoftmax_attentions.pt")
     
     # Load from cache if available
     if os.path.exists(cache_path) and not force_recompute:
@@ -309,38 +331,6 @@ def compute_proteomelm_embeddings(
     return contextualized, attentions
 
 
-def load_embeddings(
-    output_dir: str,
-    prefix: str = "proteome",
-    embedding_type: str = "proteomelm"
-) -> torch.Tensor:
-    """
-    Load cached embeddings.
-    
-    Args:
-        output_dir: Directory containing embeddings
-        prefix: Prefix used when saving embeddings
-        embedding_type: Type of embeddings ('esm' or 'proteomelm')
-        
-    Returns:
-        Embeddings tensor
-        
-    Raises:
-        FileNotFoundError: If embeddings file doesn't exist
-    """
-    if embedding_type == "esm":
-        cache_path = os.path.join(output_dir, f"{prefix}_esm_embeddings.pt")
-    elif embedding_type == "proteomelm":
-        cache_path = os.path.join(output_dir, f"{prefix}_proteomelm_embeddings.pt")
-    else:
-        raise ValueError(f"Unknown embedding_type: {embedding_type}")
-    
-    if not os.path.exists(cache_path):
-        raise FileNotFoundError(f"Embeddings not found: {cache_path}")
-    
-    return torch.load(cache_path, map_location='cpu')
-
-
 def load_attentions(
     output_dir: str,
     prefix: str = "proteome"
@@ -396,7 +386,7 @@ def compute_all_embeddings(
         orthodb_tsv_path: Path to the OrthoDB cross-reference TSV produced by
             ``download_proteome(..., download_orthodb=True)``.
         orthodb_db_path: Directory containing ``group_vectors_*.pkl`` files
-            (e.g. ``/data1/malbrank/proteomelm/training``).
+            (e.g. ``data/training``).
         orthodb_min_group_size: Only load groups with at least this many members.
 
     Returns:
@@ -448,34 +438,3 @@ def compute_all_embeddings(
         )
 
     return esm_embeddings, proteomelm_embeddings, attentions
-
-
-def check_embeddings_exist(
-    output_dir: str,
-    prefix: str = "proteome",
-    check_attentions: bool = True
-) -> dict:
-    """
-    Check which embeddings exist in cache.
-    
-    Args:
-        output_dir: Directory to check
-        prefix: Prefix used for files
-        check_attentions: Whether to check for attentions
-        
-    Returns:
-        Dictionary with existence flags
-    """
-    esm_path = os.path.join(output_dir, f"{prefix}_esm_embeddings.pt")
-    proteomelm_path = os.path.join(output_dir, f"{prefix}_proteomelm_embeddings.pt")
-    attn_path = os.path.join(output_dir, f"{prefix}_proteomelm_attentions.pt")
-    
-    result = {
-        'esm': os.path.exists(esm_path),
-        'proteomelm': os.path.exists(proteomelm_path),
-    }
-    
-    if check_attentions:
-        result['attentions'] = os.path.exists(attn_path)
-    
-    return result

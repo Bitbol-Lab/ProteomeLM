@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Lint (syntax errors only)
+        # Scoped to E9 (syntax errors) rather than the full flake8 default set:
+        # the existing codebase has ~50 pre-existing F401/F841-class findings
+        # unrelated to any single change, and black would reformat most files.
+        # Both are real cleanup opportunities but belong in their own pass, not
+        # bundled silently into this workflow. E9 alone has zero false positives
+        # and zero pre-existing debt — a real syntax error should always block.
+        run: flake8 proteomelm/ tests/ --select=E9 --max-line-length=120
+      - name: Run tests
+        run: pytest tests/ -v

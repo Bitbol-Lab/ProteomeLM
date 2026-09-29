@@ -12,20 +12,24 @@ Comparison with native ProteomeLM:
   - Naive:  group_embeds = learned embedding looked up by OrthoDB group ID (discrete, learned)
 
 Usage:
-    python -m proteomelm.modeling_naive --config configs/naive_ablation.yaml
+    Training (not wired into `proteomelm.cli train` — has its own CLI):
+        python -m proteomelm.alternate.modeling_naive --config configs/pretraining/proteomelm_alternate.yaml
+
+    Evaluation/comparison against the native model, on an already-trained checkpoint:
+        python -m experiments.ablations.compare_attention_auroc extract \
+            --species human --checkpoint <path> --model-type alternate
 
     # Or from Python:
-    from proteomelm.modeling_naive import train_orthodb_proteomelm
+    from proteomelm.alternate.modeling_naive import train_orthodb_proteomelm
     trainer = train_orthodb_proteomelm(config)
 """
 
-import gc
 import logging
 import os
 import pickle
 import random
 import tarfile
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -36,6 +40,7 @@ from transformers.trainer_utils import get_last_checkpoint
 
 from proteomelm.modeling_proteomelm import ProteomeLMForMaskedLM, ProteomeLMConfig
 from proteomelm.trainer import ProteomeLMTrainer, MemoryMonitorCallback, SaveEveryNEpochsCallback
+from proteomelm.utils.proteome import orthodb_group_vector_files
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +72,7 @@ def build_orthodb_vocab(
 
     orthodb_ids = set()
     files_loaded = 0
-    for fn in ["group_vectors_0.pkl", "group_vectors_10.pkl",
-               "group_vectors_50.pkl", "group_vectors_200.pkl"]:
-        fp = os.path.join(db_path, fn)
-        count = int(fn.split("_")[-1].split(".")[0])
-        if count < min_taxid_size or not os.path.exists(fp):
-            continue
+    for fp in orthodb_group_vector_files(db_path, min_taxid_size):
         with open(fp, "rb") as f:
             data = pickle.load(f)
             orthodb_ids.update(data.keys())
@@ -423,53 +423,6 @@ class OrthoDBProteomeLMTrainer(ProteomeLMTrainer):
 
 
 # ---------------------------------------------------------------------------
-# MinTaxid callback adapted for OrthoDBDataset
-# ---------------------------------------------------------------------------
-
-class NaiveMinTaxidSchedulerCallback:
-    """Rebuild datasets at epoch milestones with decreasing min_taxid.
-
-    Mirrors MinTaxidSchedulerCallback from the native trainer but rebuilds
-    OrthoDBDatasets instead of ProteomeLMDatasets.
-    """
-
-    def __init__(self, config: Dict, trainer, orthodb_vocab: Dict[str, int]):
-        self.config = config
-        self.trainer = trainer
-        self.orthodb_vocab = orthodb_vocab
-        # epoch -> new min_taxid value
-        self.schedule = config.get("min_taxid_schedule", {30: 50, 60: 20})
-
-    def on_epoch_end(self, args, state, control, **kwargs):
-        current_epoch = int(state.epoch)
-        new_min_taxid = self.schedule.get(current_epoch)
-
-        if new_min_taxid is None:
-            return
-
-        logger.info(f"Updating min_taxid to {new_min_taxid} at epoch {current_epoch}")
-
-        # Rebuild vocab with broader groups
-        self.orthodb_vocab = build_orthodb_vocab(
-            self.config["db_path"], min_taxid_size=new_min_taxid
-        )
-
-        # Free old datasets
-        del self.trainer.train_dataset
-        del self.trainer.eval_dataset
-        gc.collect()
-
-        self.trainer.train_dataset = OrthoDBDataset(
-            self.config["db_path"], self.orthodb_vocab, "train",
-            self.config.get("max_length", 4096), self.config.get("mask_fraction", 0.5),
-        )
-        self.trainer.eval_dataset = OrthoDBDataset(
-            self.config["db_path"], self.orthodb_vocab, "eval",
-            self.config.get("max_length", 4096), self.config.get("mask_fraction", 0.5),
-        )
-
-
-# ---------------------------------------------------------------------------
 # Main training function
 # ---------------------------------------------------------------------------
 
@@ -607,18 +560,6 @@ def train_orthodb_proteomelm(config: Dict) -> OrthoDBProteomeLMTrainer:
         trainer.add_callback(SaveEveryNEpochsCallback(
             save_every_n_epochs=config["save_epochs"]
         ))
-
-    if config.get("min_taxid_schedule"):
-        from transformers import TrainerCallback
-
-        class _NaiveTaxidCB(TrainerCallback):
-            def __init__(self, cb):
-                self._cb = cb
-            def on_epoch_end(self, args, state, control, **kwargs):
-                self._cb.on_epoch_end(args, state, control, **kwargs)
-
-        taxid_cb = NaiveMinTaxidSchedulerCallback(config, trainer, vocab)
-        trainer.add_callback(_NaiveTaxidCB(taxid_cb))
 
     trainer.add_callback(MemoryMonitorCallback(log_interval=200))
 

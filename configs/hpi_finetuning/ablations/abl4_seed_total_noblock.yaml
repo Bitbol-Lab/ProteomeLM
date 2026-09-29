@@ -1,0 +1,6 @@
+# abl4: seed dataset, total pathogen masking (0% host / 100% pathogen), no block
+namedir: "ProteomeLM-HPI-S-abl4-seed-total-noblock"
+mode: "0"            # seed split: 530 train / 59 eval pairs
+mask_fraction_H: 0.0
+mask_fraction_P: 1.0
+block_pathogen_self_attention: false

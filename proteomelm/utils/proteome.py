@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Proteome download and processing utilities for ProteomeLM validation examples.
+Proteome download and processing utilities for ProteomeLM.
 
 This module provides shared functions for:
 - Downloading proteomes from UniProt
@@ -13,7 +13,7 @@ This module provides shared functions for:
 import os
 import pickle
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import requests
@@ -151,6 +151,32 @@ def find_proteins_in_proteome(
 # =============================================================================
 
 
+# Group-vector files written next to the training shards: group_vectors_{t}.pkl holds
+# the OrthoDB groups with t <= size < next threshold (see
+# encode_dataset.split_group_vectors_by_count). Single source for every loader
+# (training dataloader, inference helpers, naive-OrthoDB ablation vocab).
+ORTHODB_GROUP_SIZE_THRESHOLDS = (0, 10, 50, 200)
+
+
+def orthodb_group_vector_files(db_path: str, min_group_size: int = 0) -> List[str]:
+    """
+    Paths of the existing ``group_vectors_{t}.pkl`` files in *db_path* whose size
+    threshold ``t`` is >= *min_group_size*, in ascending threshold order.
+
+    Missing files are skipped with a warning.
+    """
+    paths = []
+    for threshold in ORTHODB_GROUP_SIZE_THRESHOLDS:
+        if threshold < min_group_size:
+            continue
+        file_path = os.path.join(db_path, f"group_vectors_{threshold}.pkl")
+        if not os.path.exists(file_path):
+            logger.warning(f"OrthoDB file not found: {file_path}")
+            continue
+        paths.append(file_path)
+    return paths
+
+
 def load_orthodb_group_vectors(
     db_path: str,
     min_group_size: int = 0,
@@ -159,13 +185,13 @@ def load_orthodb_group_vectors(
     Load OrthoDB group mean embedding vectors from pickle files.
 
     The group_vectors pickle files live alongside the training shards
-    (e.g. ``/data1/malbrank/proteomelm/training/group_vectors_*.pkl``).
+    (e.g. ``data/training/group_vectors_*.pkl``).
     Each file is a dict mapping OrthoDB group IDs to
     ``(mean_embedding, group_size)`` tuples.  Only groups whose file
     threshold is >= *min_group_size* are loaded.
 
-    Reuses the same file discovery logic as the training dataloader
-    (see :func:`proteomelm.dataloaders._load_orthodb_data_once`).
+    Uses the same file discovery logic as the training dataloader
+    (:func:`orthodb_group_vector_files`).
 
     Args:
         db_path: Directory containing ``group_vectors_*.pkl`` files.
@@ -174,30 +200,9 @@ def load_orthodb_group_vectors(
     Returns:
         Dict mapping OrthoDB group ID -> mean embedding tensor (shape ``[1152]``).
     """
-    group_vector_files = [
-        "group_vectors_0.pkl",
-        "group_vectors_10.pkl",
-        "group_vectors_50.pkl",
-        "group_vectors_200.pkl",
-    ]
-
     group_means: Dict[str, torch.Tensor] = {}
 
-    for filename in group_vector_files:
-        # Parse threshold from filename (e.g. group_vectors_10.pkl -> 10)
-        try:
-            threshold = int(filename.split("_")[-1].split(".")[0])
-        except (ValueError, IndexError):
-            continue
-
-        if threshold < min_group_size:
-            continue
-
-        file_path = os.path.join(db_path, filename)
-        if not os.path.exists(file_path):
-            logger.warning(f"OrthoDB file not found: {file_path}")
-            continue
-
+    for file_path in orthodb_group_vector_files(db_path, min_group_size):
         logger.info(f"Loading OrthoDB group vectors from {file_path} ...")
         with open(file_path, "rb") as f:
             data = pickle.load(f)
@@ -207,7 +212,7 @@ def load_orthodb_group_vectors(
             if len(v) > 0:
                 group_means[k] = v[0]
 
-        logger.info(f"  Loaded {len(data)} groups from {filename}")
+        logger.info(f"  Loaded {len(data)} groups from {os.path.basename(file_path)}")
 
     logger.info(f"Total OrthoDB groups loaded: {len(group_means)}")
     return group_means

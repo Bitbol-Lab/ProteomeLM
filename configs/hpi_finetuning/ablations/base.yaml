@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Overrides shared by the ProteomeLM-S ablation grid (abl1-abl9). Compose after
+# the full base config and before one condition file (later files win):
+#
+#   python -m proteomelm.hpi.finetune_hpi --config \
+#       configs/hpi_finetuning/base.yaml \
+#       configs/hpi_finetuning/ablations/base.yaml \
+#       configs/hpi_finetuning/ablations/abl8_seed_total_block.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+pretrained_model_path: "Bitbol-Lab/ProteomeLM-S"
+max_steps: 20000
+
+# The keys below only matter when this file is composed without a condition
+# file (e.g. --eval-only with the untrained LoRA, i.e. a base-model eval);
+# every ablN file overrides them. The masking/block values are the code
+# defaults (hpi/dataloaders.py, hpi/finetune_hpi.py).
+namedir: "ProteomeLM-HPI-S-abl1-base-eval"
+mask_fraction_H: 0.2
+mask_fraction_P: 0.8
+block_pathogen_self_attention: false

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Common utility functions shared across ProteomeLM validation examples.
+Small file I/O helpers shared across ProteomeLM.
 
 This module provides shared utilities for:
 - File I/O operations (FASTA parsing/writing, JSON handling)
 - Directory management
-- Data processing helpers
+- PDB structure download
 
-Used by: paris.py, cct.py, ribosomes.py
+Used by: proteomelm.ppi, proteomelm.utils.proteome and the experiments/examples scripts.
 """
 
 import os

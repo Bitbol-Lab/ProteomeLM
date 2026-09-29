@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+authors:
+  - family-names: Malbranke
+    given-names: Cyril
+    affiliation: EPFL
+  - family-names: Zalaffi
+    given-names: "Gionata Paolo"
+    affiliation: EPFL
+  - family-names: Bitbol
+    given-names: "Anne-Florence"
+    affiliation: EPFL
+title: "ProteomeLM: A proteome-scale language model enables accurate and rapid prediction of protein-protein interactions and gene essentiality across taxa"
+version: "1.0.0"
+date-released: 2026-05-20
+url: "https://github.com/Bitbol-Lab/ProteomeLM"
+license: Apache-2.0
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Malbranke
+      given-names: Cyril
+    - family-names: Zalaffi
+      given-names: "Gionata Paolo"
+    - family-names: Bitbol
+      given-names: "Anne-Florence"
+  title: "ProteomeLM: A proteome-scale language model enables accurate and rapid prediction of protein-protein interactions and gene essentiality across taxa"
+  journal: "Proceedings of the National Academy of Sciences"
+  volume: 123
+  issue: 21
+  article-number: "e2524201123"
+  year: 2026
+  doi: "10.1073/pnas.2524201123"
+  url: "https://www.pnas.org/doi/10.1073/pnas.2524201123"

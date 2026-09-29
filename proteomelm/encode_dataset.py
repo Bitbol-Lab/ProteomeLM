@@ -3,6 +3,17 @@ ProteomeLM Dataset Encoding Pipeline
 
 This module provides functionality to download, process, and encode protein sequences
 from OrthoDB using ESM-C embeddings, with hierarchical group vector computation.
+
+Pipeline steps (steps 1-3 are exposed as CLI subcommands, see ``--help``):
+  1. ``download``: OrthoDB OG2genes / OG_pairs / aa.fasta (``DownloadManager``)
+  2. ``split``:    split the FASTA into parts sorted by length (``FastaSplitter``)
+  3. ``encode``:   mean-pooled ESM-C embeddings per part (``SequenceEncoder``)
+  4. group vectors from OG_pairs + OG2genes + the encoded parts
+     (``EncodingPipeline.calculate_group_vectors``), then
+     ``split_group_vectors_by_count`` into the group_vectors_{t}.pkl files (t in
+     ``utils.proteome.ORTHODB_GROUP_SIZE_THRESHOLDS``) read by the training dataloader
+  5. per-species files and tar shards (``build_individual_embeddings_files``,
+     ``convert_to_shards``)
 """
 
 import gzip
@@ -15,7 +26,7 @@ import logging
 import requests
 from pathlib import Path
 from random import shuffle
-from typing import Union, List, Tuple, Set, Dict, Any, Optional
+from typing import Union, List, Tuple, Dict, Optional
 from collections import defaultdict
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -25,20 +36,8 @@ from Bio import SeqIO
 from tqdm import tqdm
 from esm.models.esmc import ESMC
 
+from .utils import setup_logging
 from .utils.embedding import average_representation
-
-
-def setup_logging(level: str = "INFO", log_file: Optional[str] = None):
-    """Setup logging configuration."""
-    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    logging.basicConfig(
-        format=log_format,
-        level=getattr(logging, level.upper()),
-        handlers=[
-            logging.StreamHandler(),
-            *([] if log_file is None else [logging.FileHandler(log_file)])
-        ]
-    )
 
 
 logger = logging.getLogger(__name__)
@@ -161,6 +160,9 @@ class DownloadManager:
             logger.info(f"Extracted {filename} and removed archive.")
 
     def download_orthodb_data(self) -> None:
+        # NOTE: local filenames keep the "odb12v0_" prefix that later steps hard-code
+        # (e.g. build_individual_embeddings_files), whatever config.orthodb_version is
+        # downloaded.
         downloads = [
             ("odb12v0_OG2genes.tab", f"{self.config.base_url}/{self.config.orthodb_version}_OG2genes.tab.gz"),
             ("odb12v0_OG_pairs.tab", f"{self.config.base_url}/{self.config.orthodb_version}_OG_pairs.tab.gz"),
@@ -173,26 +175,6 @@ class DownloadManager:
         """Cleanup session when object is destroyed."""
         if hasattr(self, 'session'):
             self.session.close()
-
-
-def download_and_extract(save_path: str, filename: str, url: str):
-    """
-    Legacy function for backward compatibility.
-    Use DownloadManager for new code.
-    """
-    config = Config(save_path=save_path)
-    manager = DownloadManager(config)
-    manager.download_and_extract(filename, url)
-
-
-def download_data(save_path: str):
-    """
-    Legacy function for backward compatibility.
-    Use DownloadManager.download_orthodb_data for new code.
-    """
-    config = Config(save_path=save_path)
-    manager = DownloadManager(config)
-    manager.download_orthodb_data()
 
 
 class FastaSplitter:
@@ -252,16 +234,6 @@ class FastaSplitter:
 
             logger.info(f"Successfully split {input_file} into {num_parts} files, each sorted by sequence length.")
             return part_files
-
-
-def split_fasta(input_file: str, num_parts: int = 64):
-    """
-    Legacy function for backward compatibility.
-    Use FastaSplitter.split_fasta for new code.
-    """
-    config = Config(num_fasta_parts=num_parts)
-    splitter = FastaSplitter(config)
-    splitter.split_fasta(input_file, num_parts)
 
 
 class SequenceEncoder:
@@ -424,29 +396,6 @@ class SequenceEncoder:
                 return labels, torch.empty(0)
 
 
-@torch.no_grad()
-def encode_dataset(
-        model: ESMC,
-        fasta_file: Union[Path, str],
-        output_pickle: Union[Path, str],
-        max_tokens_per_batch: int = 60000,
-        device: str = "cuda",
-) -> Tuple[List[str], torch.Tensor]:
-    """
-    Legacy function for backward compatibility.
-    Use SequenceEncoder.encode_dataset for new code.
-    """
-    # Create config and encoder for backward compatibility
-    config = Config(
-        max_tokens_per_batch=max_tokens_per_batch,
-        device=device
-    )
-    encoder = SequenceEncoder(config)
-    encoder.model = model  # Use provided model instead of loading
-
-    return encoder.encode_dataset(fasta_file, output_pickle)
-
-
 class OrthoDB_Processor:
     """Handles processing of OrthoDB hierarchy and gene mappings."""
 
@@ -561,19 +510,6 @@ class OrthoDB_Processor:
             return gene_to_og
 
 
-# Legacy functions for backward compatibility
-def process_odb_graph(file_path: str) -> Tuple[Dict[str, List[str]], List[str], Dict[str, int]]:
-    """Legacy function. Use OrthoDB_Processor.process_odb_graph for new code."""
-    processor = OrthoDB_Processor(Config())
-    return processor.process_odb_graph(file_path)
-
-
-def process_odb_gene_to_og(file_path: str, node_index: Dict[str, int]) -> Dict[str, str]:
-    """Legacy function. Use OrthoDB_Processor.process_odb_gene_to_og for new code."""
-    processor = OrthoDB_Processor(Config())
-    return processor.process_odb_gene_to_og(file_path, node_index)
-
-
 @torch.no_grad()
 def process_group_vectors_and_count(
         folder: str,
@@ -675,28 +611,6 @@ def process_group_vectors_and_count(
     return group_vectors_and_count
 
 
-def calculate_group_vectors(og_pair_file: str, og_to_gene_file: str, input_folder: str, out_file: str):
-    """
-    Calculate group vectors from the embeddings of genes in each group and propagate these vectors
-    up the OrthoDB hierarchy.
-
-    Args:
-        og_pair_file (str): Path to the file containing OrthoDB pair (child-parent) mappings.
-        og_to_gene_file (str): Path to the file containing OrthoDB-to-gene mappings.
-        input_folder (str): Path to the folder containing embedding files.
-        out_file (str): Path to the output file where the group vectors will be saved.
-    """
-    parent_to_children, children_to_parents_ordered, node_index = process_odb_graph(og_pair_file)
-    gene_to_og = process_odb_gene_to_og(og_to_gene_file, node_index)
-    group_vectors_and_count = process_group_vectors_and_count(
-        input_folder, gene_to_og, children_to_parents_ordered, parent_to_children
-    )
-
-    with open(out_file, "wb") as f:
-        pickle.dump(group_vectors_and_count, f)
-    logging.info(f"Saved group vectors to {out_file}.")
-
-
 def split_group_vectors_by_count(file_path: str, counts: List[int]):
     """
     Split the group vectors by count into multiple files based on the given count
@@ -718,167 +632,6 @@ def split_group_vectors_by_count(file_path: str, counts: List[int]):
     for i, data_ in tqdm(enumerate(data_by_counts), desc="Saving"):
         with open(f"{file_path[:-4]}_{counts[i]}.pkl", "wb") as f:
             pickle.dump(data_, f)
-
-
-def group_to_group_arborescence(file_path: str, save_path: str):
-    """
-    Processes a tab-delimited file containing child-parent pairs and builds an arborescence for each child.
-
-    Args:
-        file_path (str): Path to the input file.
-        save_path (str): Path to save the arborescence mapping.
-    """
-    child_to_parent: Dict[str, str] = {}
-
-    logging.info(f"Loading OrthoDB-to-OrthoDB mapping from {file_path}...")
-    with open(file_path, "r") as f:
-        for line_number, line in enumerate(f, start=1):
-            parts = line.strip().split("\t")
-            if len(parts) != 2:
-                logging.warning(f"Skipping malformed line {line_number}: {line.strip()}")
-                continue
-            child, parent = parts
-            child_to_parent[child] = parent
-
-    child_to_arborescence: Dict[str, Set[str]] = {}
-    logging.info(f"Building arborescence for {len(child_to_parent)} nodes...")
-    for child, parent in tqdm(child_to_parent.items(), desc="Building arborescence"):
-        child_to_arborescence[child] = set()
-        current_cursor = child
-        while current_cursor in child_to_parent:
-            child_to_arborescence[child].add(current_cursor)
-            current_cursor = child_to_parent[current_cursor]
-    logging.info(f"Built arborescence for {len(child_to_arborescence)} nodes.")
-
-    with open(save_path, "wb") as f:
-        pickle.dump(child_to_arborescence, f)
-
-
-def get_taxonomic_balance(file_path: str) -> Dict[str, float]:
-    """
-    Given a file path for a file describing the taxonomic relationships (as in odb12v0_level2species.tab),
-    this function builds a tree (as a dictionary) where each key is a taxon (as an integer, except for the
-    universal root which is labeled 'root') and its value is a tuple (children, species). "children" is a set
-    of child taxonomic nodes and "species" is a set of species (terminal nodes) that occur directly at that
-    taxonomic level.
-
-    Then, it recursively computes a balanced weight for each species.
-
-    The weighting works as follows:
-      - At any taxon node, we consider its branches to be:
-          * Each child taxon (each gets one branch)
-          * The species branch (if any species are attached) – this branch is considered as one branch,
-            but then its weight is divided equally among the species within it.
-      - At each node, the parent's weight is split equally among its branches.
-      - The final weight for a species is the product of the branch probabilities along the path from
-        the root (which has weight 1) down to that species.
-
-    Returns:
-        A dict mapping species (str) to their final weight (float).
-    """
-
-    logging.info(f"Starting to build taxonomic tree from file: {file_path}")
-
-    # --- Step 1: Build the tree ---
-    # Our tree: key = taxon (int or 'root'), value = (set(child_taxa), set(species))
-    tree: Dict[Any, Tuple[Set, Set]] = {'root': (set(), set())}
-    line_count = 0
-
-    try:
-        with open(file_path, "r") as f:
-            for line in f:
-                line_count += 1
-                parts = line.strip().split("\t")
-                if len(parts) < 4:
-                    logging.debug(f"Skipping malformed line {line_count}: {line.strip()}")
-                    continue  # skip any malformed line
-
-                # The second column contains the species ID.
-                spec = parts[1].strip()
-
-                # The fourth column contains the ordered lineage in the form: {2,1224,1236,2315472}
-                lineage_str = parts[3].strip()
-                if lineage_str.startswith("{") and lineage_str.endswith("}"):
-                    lineage_str = lineage_str[1:-1]
-                try:
-                    lineage = list(map(int, lineage_str.split(",")))
-                except Exception as e:
-                    logging.error(f"Conversion error on line {line_count}: {line.strip()} - {e}")
-                    continue  # skip lines with conversion errors
-
-                # If the lineage is empty, assign species directly under the root.
-                if not lineage:
-                    tree['root'][1].add(spec)
-                    logging.debug(f"Added species {spec} directly under root (empty lineage) at line {line_count}")
-                    continue
-
-                # Register the first taxon as a child of the root.
-                tree['root'][0].add(lineage[0])
-                logging.debug(f"Added taxon {lineage[0]} as child of root at line {line_count}")
-
-                # Process the lineage: each adjacent pair defines a parent-child relationship.
-                for j in range(len(lineage) - 1):
-                    parent = lineage[j]
-                    child = lineage[j + 1]
-                    if parent not in tree:
-                        tree[parent] = (set(), set())
-                        logging.debug(f"Initialized taxon {parent} in tree at line {line_count}")
-                    tree[parent][0].add(child)
-                    logging.debug(f"Added taxon {child} as child of {parent} at line {line_count}")
-
-                # The last element in the lineage is where the species attaches.
-                last_level = lineage[-1]
-                if last_level not in tree:
-                    tree[last_level] = (set(), set())
-                    logging.debug(f"Initialized taxon {last_level} in tree at line {line_count}")
-                tree[last_level][1].add(spec)
-                logging.debug(f"Added species {spec} to taxon {last_level} at line {line_count}")
-    except FileNotFoundError as e:
-        logging.error(f"File not found: {file_path}")
-        raise e
-
-    logging.info(f"Finished building tree with {line_count} lines processed.")
-
-    # --- Step 2: Compute balanced taxonomic weights ---
-    def _recurse(taxon: Any = "root", weight: float = 1.0) -> Dict[str, float]:
-        """
-        For a given taxon (integer or 'root') and an incoming weight,
-        return a dictionary mapping species (str) to their computed weight.
-        """
-        species_weights: Dict[str, float] = {}
-        children, species = tree[taxon]
-
-        # Consider each child taxon as one branch and the species branch (if present) as one branch.
-        n_branches = len(children) + (1 if species else 0)
-        if n_branches == 0:
-            logging.debug(f"Taxon {taxon} is a dead-end with no branches.")
-            return species_weights
-
-        branch_weight = weight / n_branches
-        logging.debug(f"At taxon {taxon}: weight={weight}, branches={n_branches}, branch_weight={branch_weight}")
-
-        # Process each child taxon branch.
-        for child in children:
-            child_species_weights = _recurse(child, branch_weight)
-            for sp, sp_weight in child_species_weights.items():
-                if sp in species_weights:
-                    logging.warning(f"Species {sp} appears in multiple branches; summing weights.")
-                species_weights[sp] = species_weights.get(sp, 0) + sp_weight
-
-        # Process the species branch, if present.
-        if species:
-            n_species = len(species)
-            species_branch_weight = branch_weight / n_species
-            for sp in species:
-                species_weights[sp] = species_branch_weight
-                logging.debug(f"At taxon {taxon}: assigned weight {species_branch_weight} to species {sp}")
-
-        return species_weights
-
-    species_weights = _recurse()
-    total_weight = sum(species_weights.values())
-    logging.info(f"Sum of species weights: {total_weight}")
-    return species_weights
 
 
 def build_individual_embeddings_files(folder: str, save_folder: str, odb_file_path: str):
@@ -944,19 +697,6 @@ def build_individual_embeddings_files(folder: str, save_folder: str, odb_file_pa
         logging.info(f"Processed part {part} (with {count_reloads} reloads).")
 
 
-def create_shard(shard_path: str, elements: List[Union[str, Path]]):
-    """Create a tar file containing elements and remove original files."""
-    try:
-        with tarfile.open(shard_path, "w") as tar:
-            for element in elements:
-                file_path = str(element)
-                tar.add(file_path.split('/')[-1], arcname=os.path.basename(file_path))
-                os.remove(file_path)
-    except Exception as e:
-        print(f"Error creating shard at {shard_path}: {e}")
-        raise
-
-
 def convert_to_shards(folder: str, shardsize: int = 500, minsize_kb: int = 750):
     # List all files in the folder
     files = [f for f in os.listdir(folder) if f.endswith(".pkl")]
@@ -990,73 +730,6 @@ def convert_to_shards(folder: str, shardsize: int = 500, minsize_kb: int = 750):
             tar.add(element, arcname=os.path.basename(element))
             os.remove(element)
     logging.info(f"Created shard {shard_number}/{1+len(files)//shardsize}")
-
-
-def filter_eukaryotes_from_shards(shards_folder: str, eukaryota_file: str, output_folder: str):
-    """
-    Filters shard tar files in a folder to keep only files corresponding to eukaryote genomes.
-
-    This function reads eukaryote species from `eukaryota_file` (one per line in the format "taxid_extra",
-    e.g. "9337_0"), extracts the taxid portion, and then for each shard (.tar archive) found in `shards_folder`,
-    creates a new tar file (saved in `output_folder`) containing only those files whose basename (taxid before file
-    extension) is in the eukaryote set.
-
-    Args:
-        shards_folder (str): Path to the folder containing shard .tar files.
-        eukaryota_file (str): Path to the file with eukaryote species (one per line, e.g. "9337_0").
-        output_folder (str): Path where the filtered shard files will be saved.
-    """
-    import os
-    import tarfile
-    from pathlib import Path
-
-    # Load eukaryote taxids from eukaryota_file (extract taxid before the underscore)
-    eukaryote_taxids = set()
-    with open(eukaryota_file, "r") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                taxid = line.strip()
-                eukaryote_taxids.add(taxid)
-    logging.info(f"Loaded {len(eukaryote_taxids)} eukaryote taxids from {eukaryota_file}.")
-
-    # Ensure the output folder exists
-    os.makedirs(output_folder, exist_ok=True)
-
-    # List all .tar shard files in the shards_folder
-    shard_files = [f for f in os.listdir(shards_folder) if f.endswith(".tar")]
-    logging.info(f"Found {len(shard_files)} shard files in {shards_folder}.")
-
-    for shard_file in shard_files:
-        shard_path = os.path.join(shards_folder, shard_file)
-        output_shard_path = os.path.join(output_folder, shard_file.replace(".tar", "_euk.tar"))
-        if Path(output_shard_path).exists():
-            logging.info(f"Filtered shard already exists: {output_shard_path}; skipping.")
-            continue
-        kept_members = []
-
-        # Open the shard tar file to scan its members.
-        with tarfile.open(shard_path, "r") as tar:
-            members = tar.getmembers()
-            for member in members:
-                # Expect member names like "9337.pkl"; extract the taxid before the extension.
-                base_name = os.path.basename(member.name)
-                taxid, _ = os.path.splitext(base_name)
-                if taxid in eukaryote_taxids:
-                    kept_members.append(member)
-
-        if kept_members:
-            # Create a new tar file with only eukaryote files.
-            with tarfile.open(output_shard_path, "w") as out_tar:
-                with tarfile.open(shard_path, "r") as tar:
-                    for member in kept_members:
-                        # Extract the file object from the original tar archive and add it to the new archive.
-                        fileobj = tar.extractfile(member)
-                        if fileobj is not None:
-                            out_tar.addfile(member, fileobj)
-            logging.info(f"Created filtered shard: {output_shard_path} with {len(kept_members)} files.")
-        else:
-            logging.info(f"No eukaryote files found in {shard_path}; skipping creation of filtered shard.")
 
 
 class EncodingPipeline:
@@ -1131,16 +804,13 @@ def create_argument_parser():
 
 Examples:
   # Download OrthoDB data
-  python encode_dataset.py download --save-path data/orthodb12_raw
+  python -m proteomelm.encode_dataset download --save-path data/orthodb12_raw
 
   # Split FASTA file
-  python encode_dataset.py split --input data/sequences.fasta --parts 64
+  python -m proteomelm.encode_dataset split --input data/sequences.fasta --parts 64
 
   # Encode sequences
-  python encode_dataset.py encode --input data/sequences.fasta --output embeddings.pt
-
-  # Run full pipeline
-  python encode_dataset.py pipeline --config config.yaml
+  python -m proteomelm.encode_dataset encode --input data/sequences.fasta --output embeddings.pt
         """
     )
 
@@ -1167,13 +837,6 @@ Examples:
     encode_parser.add_argument("--output", required=True, help="Output pickle file")
     encode_parser.add_argument("--max-tokens", type=int, default=60000, help="Maximum tokens per batch")
 
-    # Pipeline command
-    pipeline_parser = subparsers.add_parser("pipeline", help="Run full pipeline")
-    pipeline_parser.add_argument("--config", help="Configuration file (optional)")
-    pipeline_parser.add_argument("--steps", nargs="+",
-                                 choices=["download", "split", "encode", "group_vectors"],
-                                 help="Pipeline steps to run (default: all)")
-
     return parser
 
 
@@ -1183,7 +846,7 @@ def main():
     args = parser.parse_args()
 
     # Setup logging
-    setup_logging(args.log_level, args.log_file)
+    setup_logging(args.log_level, log_file=args.log_file)
 
     # Create configuration
     config = Config(device=args.device)
@@ -1203,47 +866,9 @@ def main():
         pipeline = EncodingPipeline(config)
         pipeline.encode_sequences(args.input, args.output)
 
-    elif args.command == "pipeline":
-        pipeline = EncodingPipeline(config)
-        steps = args.steps or ["download", "split", "encode", "group_vectors"]
-
-        logger.info(f"Running pipeline steps: {steps}")
-
-        if "download" in steps:
-            pipeline.download_data()
-
-        # Additional pipeline steps would be implemented here
-        logger.info("Pipeline completed successfully!")
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
-    # Check if being run as script
-    import sys
-    if len(sys.argv) > 1:
-        main()
-    else:
-        config = Config()
-        pipeline = EncodingPipeline(config)
-        # Original pipeline steps (commented out for safety)
-        # Uncomment the steps you want to run:
-        # 1. Download the OrthoDB dataset
-        pipeline.download_data()
-
-        # 2. Split the big fasta file into smaller parts for easy distribution
-        big_fasta_file = "data/orthodb12_raw/odb12v0_aa.fasta"
-        pipeline.split_fasta(big_fasta_file)
-
-        # 3. Encode the dataset
-        pipeline.encoder.load_model()
-        fasta_file = "path/to/your/fasta/file"
-        output_pickle = "path/to/your/output"
-        pipeline.encode_sequences(fasta_file, output_pickle)
-
-        # 4. Calculate group vectors
-        og_pair_file = "data/orthodb12_raw/odb12v0_OG_pairs.tab"
-        og_to_gene_file = "data/orthodb12_raw/odb12v0_OG2genes.tab"
-        input_folder = "data/orthodb12_raw/esmc"
-        out_file = "data/orthodb12_raw/group_vectors.pkl"
-        pipeline.calculate_group_vectors(og_pair_file, og_to_gene_file, input_folder, out_file)
+    main()

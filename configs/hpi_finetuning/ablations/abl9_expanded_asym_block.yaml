@@ -1,0 +1,7 @@
+# abl9: EXPANDED dataset (mode 0_expanded), asymmetric masking (20/80), pathogen
+# self-attention BLOCKED. namedir keeps its historical "abl5" name.
+namedir: "ProteomeLM-HPI-S-abl5-expanded-asym-block"
+mode: "0_expanded"
+mask_fraction_H: 0.2
+mask_fraction_P: 0.8
+block_pathogen_self_attention: true

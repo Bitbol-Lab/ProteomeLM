@@ -1,0 +1,7 @@
+# abl3: seed dataset, inverted asymmetric masking (80% host / 20% pathogen), no block
+# (sanity check: directionality matters, not just the degree of imbalance)
+namedir: "ProteomeLM-HPI-S-abl3-seed-inv-noblock"
+mode: "0"            # seed split: 530 train / 59 eval pairs
+mask_fraction_H: 0.8
+mask_fraction_P: 0.2
+block_pathogen_self_attention: false

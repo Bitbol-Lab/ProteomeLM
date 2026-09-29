@@ -1,0 +1,6 @@
+# abl5: seed dataset, symmetric masking (50/50), pathogen self-attention BLOCKED
+namedir: "ProteomeLM-HPI-S-abl5-seed-sym-block"
+mode: "0"            # seed split: 530 train / 59 eval pairs
+mask_fraction_H: 0.5
+mask_fraction_P: 0.5
+block_pathogen_self_attention: true
