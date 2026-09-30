@@ -13,9 +13,9 @@ from pathlib import Path
 import warnings
 import matplotlib.pyplot as plt
 import seaborn as sns
-from matplotlib.ticker import AutoMinorLocator, MultipleLocator
+from matplotlib.ticker import MultipleLocator
 from scipy.spatial.distance import cdist
-from scipy.stats import spearmanr, pearsonr, linregress
+from scipy.stats import pearsonr, linregress
 from sklearn.metrics import roc_curve, auc, average_precision_score, precision_recall_curve
 import torch
 import networkx as nx
@@ -24,72 +24,13 @@ import networkx as nx
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from proteomelm.utils.io import ensure_dir, parse_fasta, download_pdb_structure
 from proteomelm.utils.embedding import compute_esm_embeddings, compute_proteomelm_embeddings, load_attentions
-from proteomelm.utils.proteome import (
-    download_proteome,
-    load_orthodb_group_vectors,
-    build_group_embeddings_for_proteome,
+from proteomelm.utils.proteome import download_proteome
+from experiments.examples.common import (
+    COLOR_BLUE, COLOR_CYAN, COLOR_GRAY, COLOR_GREEN, COLOR_RED,
+    apply_plot_style, build_orthodb_group_embeds, pair_attn, save_figure, style_axes, to_colormap,
 )
 
 warnings.filterwarnings('ignore')
-
-# =============================================================================
-# PLOTTING STYLE
-# =============================================================================
-
-colorspal6 = [
-    (0.25098039215686274, 0.3254901960784314, 0.8274509803921568),
-    (0.8666666666666667, 0.7019607843137254, 0.06274509803921569),
-    (0.7098039215686275, 0.11372549019607843, 0.0784313725490196),
-    (0.0, 0.7450980392156863, 1.0),
-    (0.984313725490196, 0.28627450980392155, 0.6901960784313725),
-    (0.0, 0.6980392156862745, 0.36470588235294116),
-    (0.792156862745098, 0.792156862745098, 0.792156862745098),
-]
-
-COLOR_BLUE = colorspal6[0]
-COLOR_YELLOW = colorspal6[1]
-COLOR_RED = colorspal6[2]
-COLOR_CYAN = colorspal6[3]
-COLOR_MAGENTA = colorspal6[4]
-COLOR_GREEN = colorspal6[5]
-COLOR_GRAY = colorspal6[6]
-
-
-def to_colormap(base_color, dark=0.2, light=0.9, name="custom_colormap"):
-    import colorsys
-    import matplotlib.colors as mcolors
-
-    rgb = mcolors.to_rgb(base_color)
-    h, l, s = colorsys.rgb_to_hls(*rgb)
-    colors = [
-        colorsys.hls_to_rgb(h, light, s),
-        colorsys.hls_to_rgb(h, l, s),
-        colorsys.hls_to_rgb(h, dark, s),
-    ]
-    rgb_colors = [mcolors.to_rgb(c) for c in colors]
-    return mcolors.LinearSegmentedColormap.from_list(name, rgb_colors)
-
-
-def apply_plot_style():
-    plt.rcParams.update({
-        "font.family": "Arial",
-        "text.usetex": False,
-        "font.size": 22,
-        "axes.titlesize": 24,
-        "axes.labelsize": 22,
-        "legend.fontsize": 20,
-        "xtick.labelsize": 20,
-        "ytick.labelsize": 20,
-        "svg.fonttype": "none",
-    })
-
-
-def save_figure(fig, output_dir, name):
-    pdf_path = os.path.join(output_dir, f"{name}.pdf")
-    svg_path = os.path.join(output_dir, f"{name}.svg")
-    fig.savefig(pdf_path, dpi=400, bbox_inches="tight", facecolor="white")
-    fig.savefig(svg_path, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
 
 # =============================================================================
 # CONFIGURATION & MAPPING
@@ -103,7 +44,7 @@ CONFIG = {
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
 }
 
-apply_plot_style()
+apply_plot_style(22)
 
 # Hardcoded mapping for 7K00 -> UniProt (E. coli K-12)
 # Essential for mapping structure chains to proteome indices
@@ -182,10 +123,6 @@ def get_mappings(proteome_seqs):
 # PLOTTING ROUTINES
 # =============================================================================
 
-def style_axes(ax):
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
 def analyze_membership(attentions, proteome_ids, ribo_indices, output_dir):
     print("   [1/3] Plotting Membership (Violin & ROC)...")
     
@@ -197,7 +134,8 @@ def analyze_membership(attentions, proteome_ids, ribo_indices, output_dir):
     for i in range(len(ribo_indices)):
         for j in range(i+1, len(ribo_indices)):
             idx_a, idx_b = ribo_indices[i], ribo_indices[j]
-            # Mean attention
+            # Mean attention, one direction only (a_ij, i < j), unlike the
+            # symmetrized pair_attn used by the other panels
             score = attentions[:, :, idx_a, idx_b].mean().item()
             pos_scores.append(score)
             
@@ -210,7 +148,7 @@ def analyze_membership(attentions, proteome_ids, ribo_indices, output_dir):
     # Calculate scores for Ribo vs Sampled Non-Ribo
     for r_idx in ribo_indices:
         for n_idx in sampled_neg:
-            score = attentions[:, :, r_idx, n_idx].mean().item()
+            score = attentions[:, :, r_idx, n_idx].mean().item()  # ribosomal -> other only
             neg_scores.append(score)
             
     # Plotting
@@ -272,8 +210,7 @@ def analyze_specificity(attentions, gt_df, chain_to_idx, output_dir):
         idx1 = chain_to_idx[c1]
         for j, c2 in enumerate(valid_chains):
             idx2 = chain_to_idx[c2]
-            s = (attentions[:, :, idx1, idx2].mean().item() + 
-                 attentions[:, :, idx2, idx1].mean().item()) / 2
+            s = pair_attn(attentions, idx1, idx2)
             attn_matrix[i, j] = s
             
     gt_matrix = gt_df.loc[valid_chains, valid_chains].values
@@ -310,8 +247,7 @@ def analyze_distance(attentions, chain_coords, chain_to_idx, output_dir):
                 coords2 = chain_coords[c2]
                 d = np.min(cdist(coords1, coords2))
                 idx1, idx2 = chain_to_idx[c1], chain_to_idx[c2]
-                s = (attentions[:, :, idx1, idx2].mean().item() +
-                     attentions[:, :, idx2, idx1].mean().item()) / 2
+                s = pair_attn(attentions, idx1, idx2)
                 dists.append(d); scores.append(s)
                 
     if not dists:
@@ -498,8 +434,7 @@ def analyze_attention_heads(attentions, gt_df, chain_coords, chain_to_idx, outpu
                 for j, c2 in enumerate(valid_chains):
                     if i < j:
                         idx2 = chain_to_idx[c2]
-                        s = (attentions[layer, head, idx1, idx2].item() +
-                             attentions[layer, head, idx2, idx1].item()) / 2
+                        s = pair_attn(attentions[layer, head], idx1, idx2)
                         scores.append(s)
 
             scores = np.array(scores)
@@ -641,8 +576,7 @@ def analyze_attention_heads(attentions, gt_df, chain_coords, chain_to_idx, outpu
         idx1 = chain_to_idx[c1]
         for j, c2 in enumerate(valid_chains):
             idx2 = chain_to_idx[c2]
-            s = (attentions[best_layer, best_head, idx1, idx2].item() +
-                 attentions[best_layer, best_head, idx2, idx1].item()) / 2
+            s = pair_attn(attentions[best_layer, best_head], idx1, idx2)
             attn_matrix[i, j] = s
 
     return {
@@ -714,32 +648,16 @@ def main():
 
         group_embeds = None
         if args.orthodb_db_path:
-            tsv_path = args.orthodb_tsv
-            if tsv_path is None:
-                download_proteome(
-                    CONFIG['proteome_id'],
-                    output_dir,
-                    'ecoli',
-                    reviewed_only=True,
-                    include_isoforms=False,
-                    download_orthodb=True
-                )
-                tsv_path = os.path.join(output_dir, "ecoli_orthodb.tsv")
-
-            if os.path.exists(tsv_path) and os.path.exists(args.orthodb_db_path):
-                orthodb_means = load_orthodb_group_vectors(
-                    args.orthodb_db_path,
-                    min_group_size=args.orthodb_min_group_size,
-                )
-                group_embeds, mask = build_group_embeddings_for_proteome(
-                    fasta_path=proteome_path,
-                    orthodb_tsv_path=tsv_path,
-                    orthodb_group_means=orthodb_means,
-                    esm_embeddings=esm_embs,
-                )
-                print(f"  OrthoDB functional embeddings: {mask.sum().item()}/{mask.shape[0]} mapped")
-            else:
-                print("  Warning: OrthoDB TSV or DB path missing, using ESM group embeddings")
+            group_embeds = build_orthodb_group_embeds(
+                fasta_path=proteome_path,
+                esm_embeddings=esm_embs,
+                output_dir=output_dir,
+                organism='ecoli',
+                proteome_id=CONFIG['proteome_id'],
+                db_path=args.orthodb_db_path,
+                tsv_path=args.orthodb_tsv,
+                min_group_size=args.orthodb_min_group_size,
+            )
 
         compute_proteomelm_embeddings(
             esm_embs,
@@ -768,8 +686,7 @@ def main():
             idx1 = mappings['chain_to_idx'][c1]
             for j, c2 in enumerate(valid_chains):
                 idx2 = mappings['chain_to_idx'][c2]
-                s = (attentions[:, :, idx1, idx2].mean().item() +
-                     attentions[:, :, idx2, idx1].mean().item()) / 2
+                s = pair_attn(attentions, idx1, idx2)
                 attn_matrix[i, j] = s
 
         analyze_reconstruction(attn_matrix, gt_df, valid_chains, output_dir, tag="")

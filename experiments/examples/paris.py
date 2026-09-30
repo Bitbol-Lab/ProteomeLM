@@ -26,12 +26,18 @@ Benchmark AP scores (ESM2/ProstT5 + XGBoost):
 
 Reference structure: PDB 8V45 (AriA System 2 with T7 Ocr)
 
-Usage:
-    python paris.py --prepare           # Setup data
-    python paris.py --predict           # Run ProteomeLM
-    python paris.py --evaluate          # Evaluate predictions
+Inputs (read by --prepare from --data-dir, default experiments/examples/data/paris_validation/):
+    binary_toxicity_hits.csv    per-peptide sequences ('Gene #', 'Protein_Sequence')
+                                and binary hits per system ('Sys 2' ... 'Sys 9')
+    protein_clusters_3mer.csv   'Gene #' -> 'Cluster_ID', used for the cluster-based split
+    PARIS_systems.faa           AriA protein sequences, headers containing 'Sys2' ... 'Sys9'
+These files are not included in the repository (data/ directories are
+gitignored); they are available from the authors on request.
 
-Author: For ProteomeLM validation
+Usage:
+    python paris.py --prepare                   # Setup data
+    python paris.py --predict --model <path>    # Run ProteomeLM
+    python paris.py --evaluate                  # Evaluate predictions
 """
 
 import os
@@ -39,29 +45,23 @@ import sys
 import json
 import argparse
 import warnings
-import itertools
-from typing import Dict, List, Tuple, Set, Optional
+from typing import Dict, List, Tuple
 from pathlib import Path
-from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 import torch
-import requests
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 warnings.filterwarnings('ignore')
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Get workspace root
-WORKSPACE_ROOT = Path(__file__).parent.parent.parent
-
 # Import shared utilities
 from proteomelm.utils.io import ensure_dir, parse_fasta, write_fasta
 from proteomelm.utils.embedding import compute_esm_embeddings, compute_proteomelm_embeddings, load_attentions
+from experiments.examples.common import pair_attn
 
 # =============================================================================
 # CONFIGURATION
@@ -69,7 +69,7 @@ from proteomelm.utils.embedding import compute_esm_embeddings, compute_proteomel
 
 CONFIG = {
     'output_dir': './paris_validation',
-    'data_dir': str(Path(__file__).parent / 'paris_validation'),
+    'data_dir': str(Path(__file__).parent / 'data' / 'paris_validation'),
     'esm_device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'proteomelm_model': None,
 }
@@ -111,10 +111,6 @@ BASELINE_SCORES = {
 
 
 # =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
-# =============================================================================
 # STEP 1: PREPARE DATA
 # =============================================================================
 
@@ -126,6 +122,7 @@ def prepare_data(output_dir: str):
     print("="*70)
     
     data_dir = CONFIG['data_dir']
+    print(f"  Input data: {data_dir}")
     
     # Load toxicity data
     print("\n[1/4] Loading toxicity data...")
@@ -208,7 +205,7 @@ def prepare_data(output_dir: str):
 
 
 # =============================================================================
-# STEP 2: COMPUTE EMBEDDINGS (now using shared embedding_utils)
+# STEP 2: COMPUTE EMBEDDINGS
 # =============================================================================
 
 
@@ -231,16 +228,14 @@ def extract_attention_scores(output_dir: str, aria_indices: Dict[str, int],
         attn_to_peptides = []
         for pep_idx in peptide_indices:
             # Average attention (both directions) across layers and heads
-            attn_ab = attentions[:, :, aria_idx, pep_idx].mean().item()
-            attn_ba = attentions[:, :, pep_idx, aria_idx].mean().item()
-            attn_to_peptides.append((attn_ab + attn_ba) / 2)
+            attn_to_peptides.append(pair_attn(attentions, aria_idx, pep_idx))
         
         scores_by_system[sys_id] = np.array(attn_to_peptides)
     
     return scores_by_system
 
 
-def compute_all_embeddings(output_dir: str, model_path: str = None):
+def compute_paris_embeddings(output_dir: str, model_path: str = None):
     """
     Compute all embeddings needed for evaluation.
     
@@ -369,49 +364,10 @@ def create_train_test_split(df: pd.DataFrame, test_fraction: float = 0.2,
 # STEP 4: EVALUATION
 # =============================================================================
 
-def evaluate_system(system_id: str, df: pd.DataFrame, scores: np.ndarray,
-                    output_dir: str) -> Dict:
-    """Evaluate predictions for a single PARIS system."""
-    from sklearn.metrics import (
-        average_precision_score, roc_auc_score, precision_recall_curve,
-        roc_curve
-    )
-    
-    col_name = SYSTEM_COLUMNS[system_id]
-    labels = df[col_name].values
-    
-    # Compute metrics
-    ap = average_precision_score(labels, scores)
-    auc = roc_auc_score(labels, scores)
-    
-    # Precision-recall curve
-    precision, recall, _ = precision_recall_curve(labels, scores)
-    
-    # Compare to baseline
-    baseline = BASELINE_SCORES.get(system_id, {})
-    
-    results = {
-        'system': system_id,
-        'n_samples': len(labels),
-        'n_positives': int(labels.sum()),
-        'prevalence': float(labels.mean()),
-        'average_precision': float(ap),
-        'roc_auc': float(auc),
-        'baseline_esm': baseline.get('ESM', 0),
-        'baseline_prostt5': baseline.get('ProstT5', 0),
-        'baseline_combined': baseline.get('Combined', 0),
-        'improvement_vs_esm': float(ap - baseline.get('ESM', 0)),
-        'improvement_vs_combined': float(ap - baseline.get('Combined', 0)),
-    }
-    
-    return results, (precision, recall)
-
-
 def run_evaluation(output_dir: str, use_proteomelm: bool = True):
     """Run full evaluation pipeline."""
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.ensemble import GradientBoostingClassifier
     from sklearn.metrics import average_precision_score, roc_auc_score
-    from sklearn.model_selection import cross_val_score
     
     print("\n" + "="*70)
     print("PARIS VALIDATION: EVALUATION")
@@ -428,14 +384,9 @@ def run_evaluation(output_dir: str, use_proteomelm: bool = True):
         idx_map = json.load(f)
     
     n_aria = idx_map['n_aria']
-    peptide_indices = idx_map['peptide_indices']
-    aria_indices = idx_map['aria_indices']
     
     # Extract peptide embeddings (skip first n_aria which are AriA proteins)
     peptide_emb = esm_emb[n_aria:].float()  # [n_peptides, emb_dim] - convert to float32
-    
-    with open(os.path.join(output_dir, 'aria_sequences.json')) as f:
-        aria_seqs = json.load(f)
     
     # Create train/test split
     print("\n[1/4] Creating cluster-based train/test split...")
@@ -618,77 +569,6 @@ def create_evaluation_plots(results: List[Dict], output_dir: str):
 
 
 # =============================================================================
-# STEP 5: ATTENTION ANALYSIS
-# =============================================================================
-
-def analyze_attention_patterns(output_dir: str):
-    """
-    Analyze attention patterns to understand what ProteomeLM learns.
-    
-    For systems 8 and 9 (similar AriA but different peptide specificity),
-    we can potentially identify discriminating residues.
-    """
-    from scipy import stats
-    
-    print("\n" + "="*70)
-    print("PARIS VALIDATION: ATTENTION ANALYSIS")
-    print("="*70)
-    
-    # Load data
-    df = pd.read_csv(os.path.join(output_dir, 'peptides_processed.csv'))
-    
-    # Compare Sys8 vs Sys9 attention patterns
-    sys8_path = os.path.join(output_dir, "Sys8_proteomelm_scores.pt")
-    sys9_path = os.path.join(output_dir, "Sys9_proteomelm_scores.pt")
-    
-    if not os.path.exists(sys8_path) or not os.path.exists(sys9_path):
-        print("  Skipping attention analysis (ProteomeLM scores not available)")
-        return
-    
-    sys8_scores = torch.load(sys8_path, map_location='cpu')
-    sys9_scores = torch.load(sys9_path, map_location='cpu')
-    
-    attn8 = sys8_scores['attention_scores'].numpy()
-    attn9 = sys9_scores['attention_scores'].numpy()
-    
-    # Get positive peptides for each system
-    pos8 = df['Sys 8'] == 1
-    pos9 = df['Sys 9'] == 1
-    
-    # Attention for positives vs negatives
-    print("\n  Attention statistics:")
-    print(f"    Sys8 positives: mean attn = {attn8[pos8].mean():.4f}")
-    print(f"    Sys8 negatives: mean attn = {attn8[~pos8].mean():.4f}")
-    print(f"    Sys9 positives: mean attn = {attn9[pos9].mean():.4f}")
-    print(f"    Sys9 negatives: mean attn = {attn9[~pos9].mean():.4f}")
-    
-    # Differential attention
-    diff = attn8 - attn9
-    
-    # Peptides that differ between systems
-    sys8_only = pos8 & ~pos9  # Recognized by Sys8 but not Sys9
-    sys9_only = pos9 & ~pos8  # Recognized by Sys9 but not Sys8
-    both = pos8 & pos9
-    neither = ~pos8 & ~pos9
-    
-    print(f"\n  Peptide specificity:")
-    print(f"    Sys8 only: {sys8_only.sum()}")
-    print(f"    Sys9 only: {sys9_only.sum()}")
-    print(f"    Both: {both.sum()}")
-    
-    if sys8_only.sum() > 0 and sys9_only.sum() > 0:
-        print(f"\n  Differential attention:")
-        print(f"    Sys8-only peptides: Sys8 attn = {attn8[sys8_only].mean():.4f}, Sys9 attn = {attn9[sys8_only].mean():.4f}")
-        print(f"    Sys9-only peptides: Sys8 attn = {attn8[sys9_only].mean():.4f}, Sys9 attn = {attn9[sys9_only].mean():.4f}")
-        
-        # Statistical test
-        stat, pval = stats.mannwhitneyu(
-            diff[sys8_only], diff[sys9_only], alternative='greater'
-        )
-        print(f"    Mann-Whitney U (Sys8 prefers Sys8-only): p = {pval:.4e}")
-
-
-# =============================================================================
 # COMMAND FUNCTIONS
 # =============================================================================
 
@@ -711,7 +591,7 @@ def cmd_predict(output_dir: str, model_path: str = None):
         print("Error: Run --prepare first")
         return
     
-    compute_all_embeddings(output_dir, model_path)
+    compute_paris_embeddings(output_dir, model_path)
     
     print("\n" + "="*70)
     print("PREDICTIONS COMPLETE")
@@ -730,10 +610,7 @@ def cmd_evaluate(output_dir: str):
     # Check if ProteomeLM scores exist
     use_proteomelm = os.path.exists(os.path.join(output_dir, 'Sys2_attention_scores.npy'))
     
-    results = run_evaluation(output_dir, use_proteomelm)
-    
-    # Attention analysis
-    analyze_attention_patterns(output_dir)
+    run_evaluation(output_dir, use_proteomelm)
     
     print("\n" + "="*70)
     print("EVALUATION COMPLETE")
@@ -762,7 +639,7 @@ Examples:
 
 Systems evaluated:
   Sys2, Sys3, Sys6, Sys7 (sufficient positives)
-  Sys8, Sys9 (few positives, attention analysis only)
+  Sys8, Sys9 (few positives: attention scores extracted, not evaluated)
   Sys5 (skipped - poor data quality)
 """
     )
@@ -777,11 +654,14 @@ Systems evaluated:
                         help='Output directory')
     parser.add_argument('--model', '-m', type=str, default=None,
                         help='Path to ProteomeLM model')
+    parser.add_argument('--data-dir', type=str, default=CONFIG['data_dir'],
+                        help='Directory with the input files (see module docstring)')
     
     args = parser.parse_args()
     
     CONFIG['output_dir'] = args.output
     CONFIG['proteomelm_model'] = args.model
+    CONFIG['data_dir'] = args.data_dir
     
     if args.prepare:
         cmd_prepare(args.output)

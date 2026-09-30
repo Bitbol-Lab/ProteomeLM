@@ -7,25 +7,10 @@ from torch import nn
 from transformers import DistilBertForMaskedLM, DistilBertConfig, DistilBertPreTrainedModel, PretrainedConfig, \
     add_start_docstrings
 from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask_for_sdpa
-from transformers.modeling_outputs import BaseModelOutput, TokenClassifierOutput
+from transformers.modeling_outputs import BaseModelOutput
 from transformers.models.distilbert.modeling_distilbert import Transformer
 
 from transformers.utils import ModelOutput, add_start_docstrings_to_model_forward, add_code_sample_docstrings
-
-PROTEOMELM_START_DOCSTRING = r"""
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`DistilBertConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
 
 PROTEOMELM_INPUTS_DOCSTRING = r"""
     Args:
@@ -60,12 +45,6 @@ PROTEOMELM_INPUTS_DOCSTRING = r"""
 
 _CHECKPOINT_FOR_DOC = "proteomelm"
 _CONFIG_FOR_DOC = "ProteomeLMConfig"
-
-
-def polarize(x):
-    x_norm = torch.linalg.norm(x, ord=2, dim=-1, keepdim=True)
-    x_polar = x / x_norm
-    return x_polar
 
 
 class ProteomeLMConfig(DistilBertConfig):
@@ -146,18 +125,6 @@ class ProteomeLMModel(DistilBertPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def get_position_embeddings(self) -> nn.Embedding:
-        """
-        Returns the position embeddings
-        """
-        return self.embeddings.position_embeddings
-
-    def get_input_embeddings(self) -> nn.Embedding:
-        return self.embeddings.word_embeddings
-
-    def set_input_embeddings(self, new_embeddings: nn.Embedding):
-        self.embeddings.word_embeddings = new_embeddings
-
     def _prune_heads(self, heads_to_prune: Dict[int, List[List[int]]]):
         """
         Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
@@ -213,9 +180,15 @@ class ProteomeLMModel(DistilBertPreTrainedModel):
                 attention_mask = torch.ones(input_shape, device=device)  # (bs, seq_length)
 
             if self._use_sdpa and head_mask_is_none and not output_attentions:
-                attention_mask = _prepare_4d_attention_mask_for_sdpa(
-                    attention_mask, embeddings.dtype, tgt_len=input_shape[1]
-                )
+                if attention_mask is not None and attention_mask.dim() >= 3:
+                    # Pre-expanded mask (e.g. asymmetric [B,S,S] or [B,1,S,S])
+                    if attention_mask.dim() == 3:
+                        attention_mask = attention_mask.unsqueeze(1)  # [B,S,S] -> [B,1,S,S]
+                    attention_mask = attention_mask.to(embeddings.dtype)
+                else:
+                    attention_mask = _prepare_4d_attention_mask_for_sdpa(
+                        attention_mask, embeddings.dtype, tgt_len=input_shape[1]
+                    )
 
         return self.transformer(
             x=embeddings,
@@ -228,8 +201,6 @@ class ProteomeLMModel(DistilBertPreTrainedModel):
 
 
 class ProteomeLMForMaskedLM(DistilBertForMaskedLM):
-    _keep_keys_on_attention_maps_predictions = ["inputs_embeds", "adversaries", "group_embeds"]
-
     def __init__(self, config, ):
         super().__init__(config)
         self.embedding_main = nn.Linear(config.input_size, config.dim)
@@ -237,12 +208,6 @@ class ProteomeLMForMaskedLM(DistilBertForMaskedLM):
         self.transformer = ProteomeLMModel(config)
         self.lm_head = nn.Linear(config.dim, config.input_size, bias=False)
         self.lm_norm = nn.Linear(config.dim, 1, bias=False)
-
-        # Model parallel
-        self.model_parallel = False
-        self.device_map = None
-        self.loss_choice = "polar"  # mse, cosine, or mse+cosine
-        assert self.loss_choice in ["mse", "cosine", "polar"], f"Loss type {self.loss_type} not supported."
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -252,7 +217,8 @@ class ProteomeLMForMaskedLM(DistilBertForMaskedLM):
                                       prediction_norm: torch.Tensor,
                                       root: torch.Tensor):
         residue = prediction_scores - root
-        return residue / torch.linalg.vector_norm(residue, ord=2, dim=-1, keepdim=True) * prediction_norm + root
+        residue_norm = torch.linalg.vector_norm(residue, ord=2, dim=-1, keepdim=True).clamp(min=1e-6)
+        return residue / residue_norm * prediction_norm + root
 
     def forward(
             self,

@@ -1,95 +1,57 @@
-# ProteomeLM Minimal Analysis Pipeline
+# Differential interactomes
 
-Simplified pipeline for ProteomeLM benchmark evaluation addressing reviewer comments.
+Do ProteomeLM attention heads tell interaction types apart? For E. coli, yeast
+and human, three scripts build pair benchmarks, extract whole-proteome
+attention for every pair, and score each head against random pairs and against
+the other types. Run them in order from this directory:
 
-## Code Reduction Summary
-
-| File | Original | Minimal | Reduction |
-|------|----------|---------|-----------|
-| `build_benchmark` | 1,196 lines | 275 lines | **77%** |
-| `extract_attention` | 282 lines | 241 lines | **14%** |
-| `analyze_benchmark` | 3,300+ lines (notebook) | 704 lines | **79%** |
-
-## Output Tables
-
-### Table S1: AUROC vs Random
-Discriminating interaction types from random pairs using attention heads.
-
-| Species | Direct (PDB) | Same complex (PDB) | Coexpression (STRING) |
-|---------|--------------|--------------------|-----------------------|
-| E. coli | | | |
-| S. cerevisiae | | | |
-| H. sapiens | | | |
-
-### Table S2: Pairwise Classification
-Binary classification accuracy between interaction types using logistic regression on attention heads.
-
-| Species | Direct vs Same complex | Direct vs Coexpression | Direct vs Random |
-|---------|------------------------|------------------------|------------------|
-| E. coli | | | |
-| S. cerevisiae | | | |
-| H. sapiens | | | |
-
-## Output Figures (PDF + SVG)
-
-For each species:
-1. `{species}_attention_by_type` - AUROC per attention head
-2. `{species}_heads_vs_cosine_vs_pca` - Attention vs Cosine similarity vs PCA removal
-3. `{species}_pairwise_classification_heads` - Classifier coefficient heatmaps
-4. `summary_figure` - Combined visualization
-
-## Usage
-
-### Quick Start: Run Full Pipeline
 ```bash
-./run_full_pipeline.sh
+# 1. Pair lists per interaction type (downloads UniProt, STRING, PINDER)
+python build_benchmark.py --species ecoli --output-dir data/benchmarks
+
+# 2. ProteomeLM attention for every pair (+ random negatives)
+python extract_attention.py --species ecoli --checkpoint Bitbol-Lab/ProteomeLM-M \
+    --benchmark-dir data/benchmarks --output-dir data/attention_patterns \
+    --orthodb-db-path /path/to/training   # directory with group_vectors_*.pkl
+
+# 3. Tables and figures for every species found in data/attention_patterns
+python analyze_proteomelm.py --attention-dir data/attention_patterns --output-dir data/figures
 ```
 
-This runs all three steps for all species automatically.
+Repeat steps 1–2 with `--species yeast` and `--species human`. `data/` is gitignored.
 
-### Manual Step-by-Step
+| Type | Source | Definition |
+|------|--------|------------|
+| `pdb` | PINDER | Same-species dimers with buried SASA ≥ 500 Å² and ≥ 10 residue pairs |
+| `pdb_physical` | PINDER | Remaining same-species dimers (smaller interfaces) |
+| `coexpression` | STRING v12 | Coexpression score > `--coexp-threshold` (900), minus the two PDB sets |
+| `random` | Sampled | Proteome pairs outside the positive sets, made by step 2 (`--n-negative`, seed 42) |
 
-#### Step 1: Build Benchmark
-```bash
-# For each species
-python build_benchmark_minimal.py --species yeast --output-dir data/benchmarks
-python build_benchmark_minimal.py --species human --output-dir data/benchmarks
-python build_benchmark_minimal.py --species ecoli --output-dir data/benchmarks
-```
+**`build_benchmark.py`** (`--species {yeast,human,ecoli}`, `--output-dir`, `--coexp-threshold`, `--no-mmseqs`)
+writes `raw/{species}/` (proteome FASTA, STRING files, PINDER pair caches) and
+`processed/{species}_simplified/{pdb,pdb_physical,coexpression}_pairs.tsv`. IDs are
+matched to the reviewed UniProt proteome by accession (isoform suffix dropped) or gene name.
+An MMseqs2 database is built (skip with `--no-mmseqs`), but the sequence fallback is not
+reached: the PINDER path passes no sequences to it.
 
-#### Step 2: Extract Attention
-```bash
-# For each species (requires ProteomeLM checkpoint)
-python extract_attention_minimal.py \
-    --species yeast \
-    --checkpoint Bitbol-Lab/ProteomeLM-M
-```
+**`extract_attention.py`** (`--species`, `--checkpoint`, `--benchmark-dir`, `--output-dir`,
+`--device` for ESM-C, `--max-pairs` 10000, `--n-negative` 5000, `--orthodb-tsv`,
+`--orthodb-db-path`, `--orthodb-min-group-size`, `--allow-identical-group-embeds`) runs
+ProteomeLM in bf16 on CPU over the full proteome. It writes `{species}_esm_full.pt`,
+`{species}_functional_encodings.npz` and `{species}_{type}_attention.npz` (both attention
+directions, `[n_pairs, layers, heads]`). Without OrthoDB group vectors the group embeddings
+would equal the ESM-C inputs, so the script stops unless `--allow-identical-group-embeds` is set.
 
-#### Step 3: Run Analysis
-```bash
-python analyze_proteomelm_minimal.py \
-    --attention-dir attention_patterns
-```
+**`analyze_proteomelm.py`** (`--attention-dir`, `--output-dir`) writes
+`table_s1_auroc_vs_random.csv` (best-head AUROC vs random),
+`table_s1b_{inputs,functional}_cosine.csv` (cosine-similarity baselines),
+`table_s2_pairwise_classification.csv` (logistic regression on all heads), per-species
+`{species}_attention_by_type`, `{species}_heads_vs_cosine_vs_pca` and
+`{species}_pairwise_classification_heads` figures, plus `auroc_summary_bars` and
+`summary_figure`. It also prints the tables as LaTeX.
 
-## Interaction Types
+The learned-OrthoDB-ID ablation (`experiments/ablations/compare_attention_auroc.py`) reuses
+steps 1–2 and this directory's AUROC helpers.
 
-| Type | Source | Description |
-|------|--------|-------------|
-| `pdb` | PINDER/PDB | Direct structural contacts (gold standard) |
-| `pdb_physical` | PINDER/PDB | Same complex, lower quality |
-| `coexpression` | STRING | Expression correlation |
-| `random` | Generated | Negative control |
-
-## Requirements
-
-```
-numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
-torch
-requests
-```
-
-For PINDER: `pip install datasets` (HuggingFace)
+Requirements: the `proteomelm` package, `pinder` (`pip install pinder`, step 1 only),
+`wget`, `gunzip`, and optionally `mmseqs` on `PATH`.

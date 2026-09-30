@@ -1,44 +1,30 @@
 """
-ProteomeLM Training Script
-
-This script provides a comprehensive training pipeline for ProteomeLM models
-with support for distributed training, checkpointing, and monitoring.
+ProteomeLM pretraining pipeline: model, dataset, optimizer/scheduler setup and the
+training loop. The command-line entry point is :mod:`proteomelm.cli`
+(``python -m proteomelm.cli train --config ...``), which configures logging.
 """
 
 import logging
 import os
-import sys
-import argparse
 from pathlib import Path
-from typing import Dict, Optional, List, Union
+from typing import Any, Dict, Optional, Union
 
 import torch
 import torch.distributed as dist
-import yaml
 import wandb
 from torch.optim import AdamW
-from transformers import TrainingArguments
+from transformers import TrainingArguments, get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup
 from transformers.trainer_utils import get_last_checkpoint
 
-from .utils import load_scheduler, print_number_of_parameters
+from .utils import print_number_of_parameters
 from .modeling_proteomelm import ProteomeLMForMaskedLM, ProteomeLMConfig
 from .dataloaders import get_shards_dataset, DataCollatorForProteomeLM
 from .trainer import (
     ProteomeLMTrainer,
     MemoryMonitorCallback,
-    MinTaxidSchedulerCallback,
     SaveEveryNEpochsCallback
 )
 
-# Configure logging
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("training.log", mode="a")
-    ]
-)
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +88,31 @@ def validate_config(config: Dict) -> None:
         raise ValueError("num_epochs must be positive")
 
     logger.info("Configuration validation passed")
+
+
+def load_scheduler(optimizer, config: Dict[str, Any], len_train: int, eff_batch_size: int):
+    """
+    Build the learning-rate scheduler named by ``config["scheduler"]``.
+
+    Args:
+        optimizer (Optimizer): The optimizer used for training.
+        config (Dict[str, Any]): Configuration dictionary.
+        len_train (int): Length of the training dataset.
+        eff_batch_size (int): Effective batch size.
+
+    Returns:
+        Scheduler instance.
+    """
+    total_steps = config["num_epochs"] * len_train // eff_batch_size
+
+    if config["scheduler"] == "cosine":
+        print("Using cosine scheduler")
+        return get_cosine_schedule_with_warmup(optimizer, config["warmup_steps"], total_steps)
+    elif config["scheduler"] == "constant":
+        print("Using constant scheduler with warmup")
+        return get_constant_schedule_with_warmup(optimizer, num_warmup_steps=config["warmup_steps"])
+    else:
+        raise ValueError("Invalid scheduler type. Must be 'cosine' or 'constant'.")
 
 
 def setup_model(config: Dict, pretrained_path: Optional[str] = None) -> ProteomeLMForMaskedLM:
@@ -288,7 +299,6 @@ def run_training(config: Dict, pretrained_path: Optional[str] = None, resume: bo
             save_every_n_epochs=config["save_epochs"]
         ))
 
-    trainer.add_callback(MinTaxidSchedulerCallback(config, trainer))
     trainer.add_callback(MemoryMonitorCallback(log_interval=200))
 
     logger.info(f"Training setup complete. Using {torch.cuda.device_count()} GPUs")
@@ -321,113 +331,3 @@ def run_training(config: Dict, pretrained_path: Optional[str] = None, resume: bo
         # Cleanup
         if rank == 0 and config.get("wandb_project"):
             wandb.finish()
-
-
-def load_config(config_paths: Union[str, List[str]]) -> Dict:
-    """
-    Load configuration from YAML file(s).
-
-    Args:
-        config_paths: Path(s) to configuration file(s)
-
-    Returns:
-        Merged configuration dictionary
-    """
-    if isinstance(config_paths, str):
-        config_paths = [config_paths]
-
-    if not config_paths:
-        config_paths = ["configs/proteomelm.yaml"]
-
-    config = {}
-    for path in config_paths:
-        if not Path(path).exists():
-            logger.warning(f"Configuration file not found: {path}")
-            continue
-
-        try:
-            with open(path, "r", encoding="utf-8") as file:
-                file_config = yaml.safe_load(file)
-                config.update(file_config)
-                logger.info(f"Loaded configuration from: {path}")
-        except Exception as e:
-            logger.error(f"Failed to load config from {path}: {e}")
-            raise
-
-    if not config:
-        raise ValueError("No valid configuration files found")
-
-    return config
-
-
-def main():
-    """Main entry point for training script."""
-    parser = argparse.ArgumentParser(
-        description="Train ProteomeLM models",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        nargs='+',
-        default=["configs/proteomelm.yaml"],
-        help="Path(s) to YAML configuration file(s)"
-    )
-    parser.add_argument(
-        "--pretrained",
-        type=str,
-        default=None,
-        help="Path or Hugging Face model ID to fine-tune from"
-    )
-    parser.add_argument(
-        "--no-resume",
-        action="store_true",
-        help="Don't resume from checkpoint even if available"
-    )
-    parser.add_argument(
-        "--validate-only",
-        action="store_true",
-        help="Only validate configuration without training"
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level"
-    )
-
-    args = parser.parse_args()
-
-    # Set logging level
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
-
-    try:
-        # Load configuration
-        config = load_config(args.config)
-
-        if args.validate_only:
-            validate_config(config)
-            logger.info("Configuration validation completed successfully!")
-            return
-
-        # Run training
-        run_training(
-            config=config,
-            pretrained_path=args.pretrained,
-            resume=not args.no_resume
-        )
-
-        logger.info("Training completed successfully!")
-
-    except KeyboardInterrupt:
-        logger.info("Training interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Training failed with error: {e}")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

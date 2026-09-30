@@ -3,167 +3,54 @@
 Ablation utilities for comparing attention AUROC between models.
 
 Subcommands:
-  extract  - generate attention patterns for a model checkpoint
+  extract  - generate attention patterns for a model checkpoint (standard ProteomeLM,
+             or the learned-OrthoDB-ID ablation with --model-type alternate)
   compare  - compare per-head AUROC and best-head heatmaps between two models
+
+Pair lists come from experiments/differential_interactomes/build_benchmark.py; the
+extraction and AUROC helpers are shared with experiments/differential_interactomes/.
 """
 
 import argparse
 import sys
+import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-import re
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from sklearn.metrics import roc_auc_score
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-SPECIES_PROTEOME_IDS = {
-    'yeast': 'UP000002311',
-    'human': 'UP000005640',
-    'ecoli': 'UP000000625',
-}
+from proteomelm.utils.io import parse_fasta
+from experiments.differential_interactomes.extract_attention import (
+    build_group_embeds,
+    compute_attentions,
+    create_protein_mapping,
+    embeddings_are_identical,
+    load_esm_data,
+    resolve_orthodb_tsv,
+    save_pair_attentions,
+)
 
-SPECIES_LIST = ['ecoli', 'yeast', 'human']
-SPECIES_NAMES = {'ecoli': 'E. coli', 'yeast': 'S. cerevisiae', 'human': 'H. sapiens'}
-
-colorspal6 = [
-    (0.25098039215686274, 0.3254901960784314, 0.8274509803921568),
-    (0.8666666666666667, 0.7019607843137254, 0.06274509803921569),
-    (0.7098039215686275, 0.11372549019607843, 0.0784313725490196),
-    (0.0, 0.7450980392156863, 1.0),
-    (0.984313725490196, 0.28627450980392155, 0.6901960784313725),
-    (0.0, 0.6980392156862745, 0.36470588235294116),
-    (0.792156862745098, 0.792156862745098, 0.792156862745098),
-]
-
-SPECIES_COLORS = {
-    'ecoli': colorspal6[0],
-    'yeast': colorspal6[5],
-    'human': colorspal6[2],
-}
-
-SPECIES_LEGEND_LABELS = {
-    'ecoli': r'$\it{E.\ coli}$',
-    'yeast': r'$\it{S.\ cerevisiae}$',
-    'human': r'$\it{H.\ sapiens}$',
-}
-
-TABLE_TYPES = ['pdb', 'pdb_physical', 'coexpression']
-TYPE_LABELS = {
-    'pdb': 'Direct (PDB)',
-    'pdb_physical': 'Same complex (PDB)',
-    'coexpression': 'Coexpression (STRING)',
-    'random': 'Random',
-}
-
-COLORS = {
-    'pdb': '#2B3AC0',
-    'pdb_physical': '#E74C3C',
-    'coexpression': '#F39C12',
-    'random': '#7F8C8D',
-}
-
-
-def parse_fasta(fasta_file: Path) -> Dict[str, str]:
-    """Parse FASTA file to dict of {id: sequence}."""
-    sequences = {}
-    current_id, current_seq = None, []
-
-    with open(fasta_file) as f:
-        for line in f:
-            if line.startswith('>'):
-                if current_id:
-                    sequences[current_id] = ''.join(current_seq)
-                header = line[1:].split()[0]
-                current_id = header.split('|')[1] if '|' in header else header
-                current_seq = []
-            else:
-                current_seq.append(line.strip())
-        if current_id:
-            sequences[current_id] = ''.join(current_seq)
-
-    return sequences
-
-
-def create_protein_mapping(fasta_file: Path) -> Dict[str, int]:
-    """Create mapping from protein IDs to proteome index."""
-    mapping = {}
-    idx = 0
-
-    with open(fasta_file) as f:
-        for line in f:
-            if line.startswith('>'):
-                header = line[1:].strip()
-                parts = header.split('|')
-                uniprot_id = parts[1] if len(parts) > 1 else header.split()[0]
-                mapping[uniprot_id] = idx
-
-                if 'GN=' in header:
-                    gene = header.split('GN=')[1].split()[0]
-                    mapping[gene] = idx
-
-                if match := re.search(r'Y[A-P][LR]\d{3}[WC](?:-[A-Z])?', header):
-                    mapping[match.group(0)] = idx
-
-                idx += 1
-
-    return mapping
-
-
-def extract_attention(
-    pairs: List[Tuple[str, str]],
-    protein_to_idx: Dict[str, int],
-    attentions: List[np.ndarray],
-    max_pairs: int = 10000,
-) -> Optional[Dict]:
-    """Extract attention values for protein pairs."""
-    valid_pairs, idx_a, idx_b = [], [], []
-
-    for a, b in pairs:
-        if a in protein_to_idx and b in protein_to_idx:
-            valid_pairs.append((a, b))
-            idx_a.append(protein_to_idx[a])
-            idx_b.append(protein_to_idx[b])
-            if len(valid_pairs) >= max_pairs:
-                break
-
-    if not valid_pairs:
-        return None
-
-    idx_a, idx_b = np.array(idx_a), np.array(idx_b)
-
-    attn_ab = np.stack([attn[:, idx_a, idx_b] for attn in attentions]).transpose(2, 0, 1)
-    attn_ba = np.stack([attn[:, idx_b, idx_a] for attn in attentions]).transpose(2, 0, 1)
-
-    return {'pair_ids': valid_pairs, 'attention_a_to_b': attn_ab, 'attention_b_to_a': attn_ba}
-
-
-def generate_negatives(
-    proteins: List[str],
-    positives: pd.DataFrame,
-    n: int,
-    seed: int = 42,
-) -> List[Tuple[str, str]]:
-    """Generate random negative pairs."""
-    np.random.seed(seed)
-    pos_set = set(zip(positives['protein_a'], positives['protein_b']))
-    negatives = []
-
-    for _ in range(n * 10):
-        a, b = tuple(sorted(np.random.choice(proteins, 2, replace=False)))
-        if (a, b) not in pos_set:
-            negatives.append((a, b))
-            if len(negatives) >= n:
-                break
-
-    return negatives
+# analyze_proteomelm sets global rcParams and warning filters on import; keep this script's defaults.
+with plt.rc_context(), warnings.catch_warnings():
+    from experiments.differential_interactomes.analyze_proteomelm import (
+        SPECIES_COLORS,
+        SPECIES_LIST,
+        SPECIES_NAMES,
+        SPECIES_NAMES_ITALIC as SPECIES_LEGEND_LABELS,
+        TABLE_TYPES,
+        TYPE_LABELS,
+        compute_auroc_vs_random,
+        compute_per_head_auroc,
+        load_attention_data,
+    )
 
 
 def build_orthodb_ids_for_proteome(
@@ -174,7 +61,7 @@ def build_orthodb_ids_for_proteome(
     """Build OrthoDB ID indices aligned to proteome order."""
     from proteomelm.utils.proteome import parse_orthodb_tsv
 
-    sequences = parse_fasta(fasta_file)
+    sequences = parse_fasta(str(fasta_file))
     protein_ids = list(sequences.keys())
     uniprot_to_ogs = parse_orthodb_tsv(str(orthodb_tsv))
 
@@ -193,68 +80,6 @@ def build_orthodb_ids_for_proteome(
 
     print(f"  OrthoDB IDs mapped: {n_mapped}/{len(orthodb_ids)}")
     return torch.tensor(orthodb_ids, dtype=torch.long)
-
-
-def load_attention_data(attention_dir: Path, species: str, types: List[str]) -> Dict:
-    """Load attention data for specified types."""
-    data = {}
-    for itype in types:
-        path = attention_dir / f"{species}_{itype}_attention.npz"
-        if path.exists():
-            npz = np.load(path, allow_pickle=True)
-            attn = (npz['attention_a_to_b'] + npz['attention_b_to_a']) / 2
-            data[itype] = {
-                'attention': attn,
-                'pairs': [tuple(p) for p in npz['pair_ids']],
-            }
-    return data
-
-
-def compute_auroc_vs_random(attention_data: Dict, itype: str) -> float:
-    """Compute best AUROC for interaction type vs random using attention heads."""
-    if itype not in attention_data or 'random' not in attention_data:
-        return np.nan
-
-    pos_attn = attention_data[itype]['attention']
-    neg_attn = attention_data['random']['attention']
-
-    n_layers, n_heads = pos_attn.shape[1], pos_attn.shape[2]
-    y_true = np.concatenate([np.ones(len(pos_attn)), np.zeros(len(neg_attn))])
-
-    best_auroc = 0.5
-    for layer in range(n_layers):
-        for head in range(n_heads):
-            y_score = np.concatenate([pos_attn[:, layer, head], neg_attn[:, layer, head]])
-            auroc = roc_auc_score(y_true, y_score)
-            best_auroc = max(best_auroc, auroc)
-
-    return best_auroc
-
-
-def compute_per_head_auroc(attention_data: Dict, itype: str) -> Optional[pd.DataFrame]:
-    """Compute AUROC for each individual attention head."""
-    if itype not in attention_data or 'random' not in attention_data:
-        return None
-
-    pos_attn = attention_data[itype]['attention']
-    neg_attn = attention_data['random']['attention']
-
-    n_layers, n_heads = pos_attn.shape[1], pos_attn.shape[2]
-    y_true = np.concatenate([np.ones(len(pos_attn)), np.zeros(len(neg_attn))])
-
-    head_aurocs = []
-    for layer in range(n_layers):
-        for head in range(n_heads):
-            y_score = np.concatenate([pos_attn[:, layer, head], neg_attn[:, layer, head]])
-            auroc = roc_auc_score(y_true, y_score)
-            head_aurocs.append({
-                'layer': layer,
-                'head': head,
-                'head_id': f'L{layer}H{head}',
-                'auroc': auroc,
-            })
-
-    return pd.DataFrame(head_aurocs)
 
 
 def compute_table_s1_data(attention_dir: Path) -> pd.DataFrame:
@@ -451,67 +276,12 @@ def run_extract(args: argparse.Namespace) -> None:
 
     if not proteome_file.exists():
         raise FileNotFoundError(
-            f"Proteome not found: {proteome_file}\nRun build_benchmark_minimal.py first!"
+            f"Proteome not found: {proteome_file}\nRun differential_interactomes/build_benchmark.py first!"
         )
 
     print(f"Proteome: {proteome_file}")
 
-    esm_file = output_dir / f"{args.species}_esm_full.pt"
-    if esm_file.exists():
-        print("Loading cached ESM embeddings...")
-        esm_data = torch.load(esm_file)
-    else:
-        print("Computing ESM embeddings...")
-        sys.path.insert(0, str(Path(args.checkpoint).parent.parent))
-        from proteomelm.utils.embedding import build_genome_esmc
-
-        with torch.no_grad():
-            esm_data = build_genome_esmc(proteome_file, device=args.device)
-        torch.save(esm_data, esm_file)
-
-    group_embeds = esm_data["group_embeds"]
-    orthodb_ids = None
-
-    if args.model_type == 'standard' and args.orthodb_db_path:
-        orthodb_tsv = args.orthodb_tsv
-        if orthodb_tsv is None:
-            proteome_id = SPECIES_PROTEOME_IDS.get(args.species)
-            if proteome_id is None:
-                print(f"Warning: No proteome ID for species '{args.species}'")
-            else:
-                from proteomelm.utils.proteome import download_proteome
-
-                print("Downloading OrthoDB TSV via UniProt...")
-                download_proteome(
-                    proteome_id=proteome_id,
-                    output_dir=str(raw_dir),
-                    organism_name=args.species,
-                    reviewed_only=True,
-                    download_orthodb=True,
-                )
-                orthodb_tsv = str(raw_dir / f"{args.species}_orthodb.tsv")
-
-        if orthodb_tsv and not Path(orthodb_tsv).exists():
-            print(f"Warning: OrthoDB TSV not found: {orthodb_tsv}")
-            print("  Falling back to ESM group embeddings.")
-        elif not Path(args.orthodb_db_path).exists():
-            print(f"Warning: OrthoDB DB path not found: {args.orthodb_db_path}")
-            print("  Falling back to ESM group embeddings.")
-        elif orthodb_tsv:
-            from proteomelm.utils.proteome import load_orthodb_group_vectors, build_group_embeddings_for_proteome
-
-            print("Building OrthoDB functional group embeddings...")
-            orthodb_means = load_orthodb_group_vectors(
-                args.orthodb_db_path,
-                min_group_size=args.orthodb_min_group_size,
-            )
-            group_embeds, mask = build_group_embeddings_for_proteome(
-                fasta_path=str(proteome_file),
-                orthodb_tsv_path=orthodb_tsv,
-                orthodb_group_means=orthodb_means,
-                esm_embeddings=esm_data["inputs_embeds"],
-            )
-            print(f"  OrthoDB functional embeddings: {mask.sum().item()}/{mask.shape[0]} mapped")
+    esm_data = load_esm_data(proteome_file, output_dir / f"{args.species}_esm_full.pt", args.device)
 
     if args.model_type == 'alternate':
         from proteomelm.alternate.modeling_naive import (
@@ -519,23 +289,8 @@ def run_extract(args: argparse.Namespace) -> None:
             build_orthodb_vocab,
         )
 
-        orthodb_tsv = args.orthodb_tsv
-        if orthodb_tsv is None:
-            proteome_id = SPECIES_PROTEOME_IDS.get(args.species)
-            if proteome_id is None:
-                raise ValueError(f"No proteome ID for species '{args.species}'")
-            from proteomelm.utils.proteome import download_proteome
-
-            print("Downloading OrthoDB TSV via UniProt...")
-            download_proteome(
-                proteome_id=proteome_id,
-                output_dir=str(raw_dir),
-                organism_name=args.species,
-                reviewed_only=True,
-                download_orthodb=True,
-            )
-            orthodb_tsv = str(raw_dir / f"{args.species}_orthodb.tsv")
-
+        group_embeds = esm_data["group_embeds"]
+        orthodb_tsv = resolve_orthodb_tsv(args.species, raw_dir, args.orthodb_tsv)
         if orthodb_tsv is None or not Path(orthodb_tsv).exists():
             raise FileNotFoundError("OrthoDB TSV is required for OrthoDBDiscrete model")
         if args.orthodb_db_path is None or not Path(args.orthodb_db_path).exists():
@@ -563,27 +318,24 @@ def run_extract(args: argparse.Namespace) -> None:
         model = ProteomeLMWithOrthoDBEmbedding.from_pretrained(
             args.checkpoint, orthodb_vocab_size=len(orthodb_vocab)
         )
+        attentions = compute_attentions(model, esm_data["inputs_embeds"], orthodb_ids=orthodb_ids[None])
     else:
+        group_embeds, _ = build_group_embeds(
+            esm_data, proteome_file, args.species, raw_dir,
+            orthodb_db_path=args.orthodb_db_path,
+            orthodb_tsv=args.orthodb_tsv,
+            min_group_size=args.orthodb_min_group_size,
+        )
+        if embeddings_are_identical(esm_data["inputs_embeds"], group_embeds):
+            # extract_attention.py refuses this case; kept here to reproduce earlier ablation runs.
+            print("Warning: group_embeds are identical to inputs_embeds (ESM-C used as group embeddings).")
+            print("  Pass --orthodb-db-path for OrthoDB group embeddings, as in pretraining.")
+
         from proteomelm.modeling_proteomelm import ProteomeLMForMaskedLM
         model = ProteomeLMForMaskedLM.from_pretrained(args.checkpoint)
-
-    model = model.to(dtype=torch.bfloat16, device='cpu').eval()
-
-    print("Running inference...")
-    with torch.no_grad():
-        model_inputs = {
-            "inputs_embeds": esm_data["inputs_embeds"][None].to(dtype=torch.bfloat16),
-            "output_attentions": True,
-        }
-        if args.model_type == 'alternate':
-            model_inputs["orthodb_ids"] = orthodb_ids[None]
-        else:
-            model_inputs["group_embeds"] = group_embeds[None].to(dtype=torch.bfloat16)
-
-        output = model(**model_inputs)
-        attentions = [attn.squeeze(0).float().numpy() for attn in output.attentions]
-
-    print(f"  {len(attentions)} layers, shape: {attentions[0].shape}")
+        attentions = compute_attentions(
+            model, esm_data["inputs_embeds"], group_embeds=group_embeds[None].to(dtype=torch.bfloat16)
+        )
 
     protein_to_idx = create_protein_mapping(proteome_file)
     print(f"  {len(set(protein_to_idx.values()))} proteins mapped")
@@ -596,49 +348,9 @@ def run_extract(args: argparse.Namespace) -> None:
         protein_to_idx=protein_to_idx,
     )
 
-    all_pos = []
-    for bm_type in ['pdb', 'pdb_physical', 'coexpression']:
-        print(f"\n[{bm_type.upper()}]")
-        path = pairs_dir / f"{bm_type}_pairs.tsv"
-
-        if not path.exists():
-            print(f"  Not found: {path}")
-            continue
-
-        df = pd.read_csv(path, sep='\t')
-        if 'uniprot_a' in df.columns:
-            df = df.rename(columns={'uniprot_a': 'protein_a', 'uniprot_b': 'protein_b'})
-
-        all_pos.append(df)
-        pairs = list(zip(df['protein_a'], df['protein_b']))
-        print(f"  {len(pairs)} pairs loaded")
-
-        result = extract_attention(pairs, protein_to_idx, attentions, args.max_pairs)
-        if result:
-            np.savez_compressed(
-                output_dir / f"{args.species}_{bm_type}_attention.npz",
-                pair_ids=np.array(result['pair_ids'], dtype=object),
-                attention_a_to_b=result['attention_a_to_b'],
-                attention_b_to_a=result['attention_b_to_a'],
-            )
-            print(f"  Saved {len(result['pair_ids'])} pairs")
-        else:
-            print("  No valid pairs found in proteome mapping")
-
-    print("\n[RANDOM]")
-    if all_pos:
-        all_positive = pd.concat(all_pos, ignore_index=True)
-        neg_pairs = generate_negatives(list(protein_to_idx.keys()), all_positive, args.n_negative)
-
-        result = extract_attention(neg_pairs, protein_to_idx, attentions, args.max_pairs)
-        if result:
-            np.savez_compressed(
-                output_dir / f"{args.species}_random_attention.npz",
-                pair_ids=np.array(result['pair_ids'], dtype=object),
-                attention_a_to_b=result['attention_a_to_b'],
-                attention_b_to_a=result['attention_b_to_a'],
-            )
-            print(f"  Saved {len(result['pair_ids'])} pairs")
+    save_pair_attentions(
+        attentions, protein_to_idx, pairs_dir, output_dir, args.species, args.max_pairs, args.n_negative
+    )
 
     print("\nDone. Output:")
     print(f"  {output_dir}")

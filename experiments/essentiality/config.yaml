@@ -1,0 +1,100 @@
+# Essentiality classifier (ProteomeLM PNAS paper, Fig. 5).
+#
+# `classifier` is the final published configuration (formerly ess-classifier7.yaml);
+# `data_download` comes from ess-classifier.yaml, which the download/label scripts read.
+# Every entry under `paths` is relative to --data-dir (default DATA_ROOT/essentiality;
+# absolute paths are kept as-is). The names are the ones on the original server, so
+# `--data-dir` pointed at the original data folder reuses its downloaded and processed files.
+
+paths:
+  # --- data (stage `data`) ---
+  ogee_data_dir: ogee_data                          # OGEE gene_essentiality.txt, genes.txt, datasets.txt
+  uniprot_reference_genomes_dir: uniprot_reference_genomes
+  uniprot_data_dir: uniprot_data2
+  ncbi_directory: othersources_data2                # NCBI + custom sources (SGD, Fitness Browser)
+  all_sequences_folder: all_fasta3                  # all downloaded proteomes, one FASTA per taxid
+  fasta_folder: all_fasta_noduplicates2             # same, exact duplicates (first 4096 aa) removed
+  label_folder: label_to_ess7                       # labeled_essentiality_taxid{t}.pkl
+  # --- split (stage `split`) ---
+  merged_fasta: all_sequences2.fasta
+  splits_folder: .                                  # {prefix}_{thr}[_seed{S}].pkl live here
+  mmseqs_folder: tmp                                # mmseqs easy-cluster outputs
+  # --- embeddings, classifiers, metrics (stages `train`, `evaluate`, `baselines`) ---
+  embeds_folder: embedded_data_superfolder          # {ProteomeLM-{size}-210,ESMC}/{prefix}embeds_taxid{t}.pkl
+  esmc_embeds_folder: embedded_data_superfolder/ESMC
+  baseline_weights_folder: ProteomeLM-baseline      # random / statistics ProteomeLM weights
+  cached_dataset_folder: dataset_cache/cache_noschedule_nonorm
+  classifier_checkpoints_folder: checkpoints/runs
+  plots_folder: results/runs/plots       # roc/pr/otherscores/metrics-distribution pkls
+  figures_folder: results/runs/figures
+  interpretability_folder: results/final_dataset    # {weights}-interpretability-{size}.{csv,pkl}
+  minimalcell_folder: inference_data/minimalcell    # JCVI-Syn1.0 / Syn3A proteomes + labels
+  logs_folder: logs/essentiality
+  # Published run (legacy split); use with --classifier-dir / --plots-dir to re-plot it.
+  published_classifier_checkpoints_folder: checkpoints/final_dataset_allgenomes_adam_noschedule_nonorm
+  published_plots_folder: results/final_dataset/plots_adam_allgenomes_noschedule_nonorm
+
+split:
+  prefix: all_sequences2_labelled_splits
+  threshold: 40          # mmseqs --min-seq-id 0.40
+  n_splits: 5            # fold 0 = test, 1 = validation, 2-4 = train
+  seed: 0                # fold-assignment seed
+
+classifier:
+  num_labels: 2
+  should_exclude_taxids: True
+  load_data_from_memory: True
+  learning_rate: 0.001
+  n_epochs: 1000
+  patience: 30
+  optimizer: Adam
+  weight_decay: 0
+  classifier_momentum: 0.9
+  lr_gamma: null
+  max_input_length: 20000
+  dtype: "bfloat16"
+  batch_size: 8
+  dropout: 0.5
+  classifier_betas:
+    - 0.9
+    - 0.999
+  use_layernorm: False
+  normalize_genome: False
+  use_lr_scheduler: False
+  classifier_hidden_dim: 2048
+  # Genomes never used for train/val/test: yeast (580240) and E. coli K-12 (83333)
+  # are the held-out genomes of Fig. 5B; the others were excluded as problematic.
+  which_taxids_to_exclude:
+    - 580240
+    - 941322
+    - 199310
+    - 679895
+    - 83333
+    - 1380365
+    - 1124478
+  which_taxids_to_use: null
+  # Logged each epoch as out-of-distribution validation; early stopping uses the
+  # in-distribution validation fold only.
+  val_taxids_for_early_stopping:
+    - 580240
+    - 83333
+  wandb_project_name: "ProteomeLM-Classifier-FinalDataset-AllGenomes-Adam5"
+
+data_download:
+  should_check_labels: False
+  taxids_with_custom_download:
+    - 580240
+    - 290336
+    - 709015
+    - 93064
+    - 1380365
+    - 1122134
+    - 321846
+    - 679895
+    - 294
+    - 400667
+    - 220341
+    - 243273
+  holdout_testset:
+    - 580240
+    - 83333

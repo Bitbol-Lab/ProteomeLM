@@ -2,13 +2,13 @@
 
 <div align="center">
 
-[![bioRxiv](https://img.shields.io/badge/bioRxiv-2025.08.01.668221-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.08.01.668221v1.abstract)
+[![PNAS](https://img.shields.io/badge/PNAS-10.1073%2Fpnas.2524201123-b31b1b.svg)](https://www.pnas.org/doi/10.1073/pnas.2524201123)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-380/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![Hugging Face Models](https://img.shields.io/badge/🤗%20Hugging%20Face-Models-yellow)](https://huggingface.co/collections/Bitbol-Lab/proteomelm-689dc1bbee9afabc10b34931)
 
-[**Paper**](https://www.biorxiv.org/content/10.1101/2025.08.01.668221v1.abstract) | [**Models**](https://huggingface.co/collections/Bitbol-Lab/proteomelm-689dc1bbee9afabc10b34931) | [**Dataset**](https://huggingface.co/datasets/Bitbol-Lab/ProteomeLM-dataset)
+[**Paper**](https://www.pnas.org/doi/10.1073/pnas.2524201123) | [**Models**](https://huggingface.co/collections/Bitbol-Lab/proteomelm-689dc1bbee9afabc10b34931) | [**Dataset**](https://huggingface.co/datasets/Bitbol-Lab/ProteomeLM-dataset)
 </div>
 
 ![ProteomeLM Overview](img/main_fig.png)
@@ -23,6 +23,7 @@
 - **Ultra-fast PPI screening**: Screens whole interactomes orders of magnitude faster than classic coevolution-based methods, enabling proteome-wide interaction analysis
 - **State-of-the-art performance**: Achieves superior results on protein-protein interaction prediction across species and benchmarks through attention-based interaction detection
 - **Gene essentiality prediction**: Novel capability to predict essential genes generalizing across diverse taxa
+- **Host-pathogen interaction (HPI) fine-tuning**: LoRA-adapted asymmetric masking scheme (host proteins masked lightly, pathogen proteins masked heavily, up to fully) with optional blocking of pathogen-pathogen self-attention, transferring proteome-scale pretraining to cross-species host-pathogen interaction prediction — see `proteomelm/hpi/`
 - **Attention-based insights**: Spontaneously captures protein-protein interactions in attention coefficients without explicit training on interaction data
 - **Hierarchical learning**: Leverages OrthoDB taxonomic hierarchy for structured representation learning across the tree of life
 
@@ -42,6 +43,9 @@ source venv/bin/activate  # Linux/Mac
 
 # Install dependencies
 pip install -r requirements.txt
+# Or, for development (editable install + tests/lint tools):
+pip install -e ".[dev]"
+# Optional extras: pip install -e ".[notebooks]" for Jupyter, ".[gpu]" for flash-attn, ".[experiments]" for the analysis scripts in experiments/
 ```
 
 ## 🤗 Pre-trained Models
@@ -55,7 +59,6 @@ All ProteomeLM models are available on Hugging Face Hub. Choose the appropriate 
 | [ProteomeLM-M](https://huggingface.co/Bitbol-Lab/ProteomeLM-M) | 112M | 225MB | `Bitbol-Lab/ProteomeLM-M` | Medium model for most applications (can't fit biggest proteomes) |
 | [ProteomeLM-L](https://huggingface.co/Bitbol-Lab/ProteomeLM-L) | 328M | 656MB | `Bitbol-Lab/ProteomeLM-L` | Large model for maximum performance (can fit biggest proteomes) |
 
-
 ### Training Dataset
 
 The training dataset is also available on Hugging Face:
@@ -65,113 +68,134 @@ The training dataset is also available on Hugging Face:
 
 ```
 ProteomeLM/
-├── 📄 __init__.py                 # Package initialization
-├── 📄 setup.py                    # Package setup script
-├── 📋 requirements.txt            # Python dependencies
+├── 📄 pyproject.toml              # Package metadata, dependencies, optional extras
+├── 📋 requirements.txt            # Core Python dependencies
+├── 📄 CITATION.cff                # Machine-readable citation
 ├── 📄 LICENSE                     # Apache 2.0 license
-├── 📄 README.md                   # Project documentation
-├── 📄 paper.pdf                   # Research paper
+├── 📄 README.md                   # This file
 ├── 🐳 Dockerfile                  # Container configuration
 ├── 📁 configs/                    # Training configuration files
-│   └── proteomelm.yaml           # Base configuration
-├── 📁 proteomelm/                # Core model implementation
-│   ├── __init__.py              # Package initialization
-│   ├── cli.py                   # Command-line interface
-│   ├── config_manager.py        # Configuration management
-│   ├── modeling_proteomelm.py    # ProteomeLM model architecture
-│   ├── trainer.py               # Custom training logic
-│   ├── train.py                 # Training functions
-│   ├── dataloaders.py           # Data loading utilities
-│   ├── encode_dataset.py        # Dataset encoding
-│   ├── utils.py                 # Utility functions
-│   └── ppi/                     # PPI-specific components
-│       ├── __init__.py          # Package initialization
-│       ├── config.py            # PPI configuration
-│       ├── data_processing.py   # Data preprocessing
-│       ├── evaluation.py        # Performance evaluation
-│       ├── experiment_runner.py  # Experiment management
-│       ├── feature_extraction.py # Feature engineering
-│       ├── main.py              # Main PPI runner
-│       ├── model.py             # PPI models
-│       └── utils.py             # PPI utilities
-├── 📁 experiments/              # Research experiments
-│   ├── __init__.py              # Package initialization
-│   ├── fast_orthodb_matching.py # Ortholog matching utilities
-│   ├── nb_plots.ipynb           # Analysis notebook
-│   └── interactomes/            # Interactome analysis
-│       ├── human.ipynb          # Human interactome analysis
-│       └── pathogens.ipynb      # Pathogen interactome analysis
-├── 📁 notebooks/                # Analysis notebooks
-│   ├── ppi_prediction.ipynb     # PPI prediction notebook
-│   └── notebooks_utils.py       # Notebook utilities
-├── 📁 weights/                  # Pre-trained model weights
-│   ├── ProteomeLM-XS/           # Extra small model weights
-│   ├── ProteomeLM-S/            # Small model weights
-│   ├── ProteomeLM-M/            # Medium model weights
-│   └── ProteomeLM-L/            # Large model weights
-├── 📁 data/                     # Data storage
-│   ├── interactomes/            # Interaction data
-│   │   ├── logistic_regression_model_human.pkl
-│   │   └── logistic_regression_model_pathogens.pkl
-│   └── orthodb12_raw/           # OrthoDB raw data
-│       ├── odb12v0_aa.fasta.gz  # Amino acid sequences
-│       ├── odb12v0_OG2genes.tab # Gene-ortholog mapping
-│       └── odb12v0_OG_pairs.tab # Ortholog pairs
-└── 📁 img/                      # Documentation images
-    └── main_fig.png             # Main figure
+│   ├── pretraining/               # Base ProteomeLM pretraining configs
+│   │   ├── proteomelm.yaml
+│   │   └── proteomelm_alternate.yaml   # Pairs with proteomelm/alternate/modeling_naive.py
+│   └── hpi_finetuning/             # HPI LoRA fine-tuning configs
+│       ├── base.yaml
+│       └── ablations/              # Masking/blocking ablation grid (overrides composed after base.yaml)
+├── 📁 proteomelm/                 # Core model implementation
+│   ├── modeling_proteomelm.py     # ProteomeLM model architecture
+│   ├── trainer.py                 # Custom training logic (polar loss, callbacks)
+│   ├── cli.py                     # Training entry point (`python -m proteomelm.cli train`)
+│   ├── train.py                   # Training setup (model, datasets, optimizer, Trainer)
+│   ├── dataloaders.py             # Pretraining data loading utilities
+│   ├── encode_dataset.py          # ESM-C dataset encoding
+│   ├── alternate/                 # Learned-OrthoDB-ID-embedding ablation (modeling_naive.py)
+│   ├── hpi/                       # Host-pathogen interaction module
+│   │   ├── dataloaders.py         # Pair-shard loading + asymmetric masking
+│   │   ├── finetune_hpi.py        # HPI LoRA fine-tuning entry point
+│   ├── ppi/                       # PPI-specific components
+│   │   ├── model.py, feature_extraction.py, config.py, data_processing.py
+│   │   ├── notebook_inference.py  # Notebook scoring helpers
+│   │   ├── notebook_plots.py      # Notebook figures
+│   │   └── notebook_runtime.py    # Notebook data/runtime helpers
+│   └── utils/                     # ESM-C embedding + OrthoDB group-vector utilities
+├── 📁 experiments/                # Research experiments (not part of the installed package)
+│   ├── ablations/                 # Attention-pattern ablation comparisons
+│   ├── differential_interactomes/ # Cross-species PPI analysis
+│   ├── essentiality/              # Gene-essentiality classifier (PNAS Fig. 5) — see experiments/essentiality/README.md
+│   ├── examples/                  # Validation examples (PARIS, ribosome, TRiC)
+│   ├── ppi_benchmarks/            # Bernett / D-SCRIPT PPI benchmarks — see experiments/ppi_benchmarks/README.md
+│   ├── ppi_bundled_models/        # Trains the bundled supervised PPI models (data/interactomes/)
+│   ├── hpi/                 # HPI paper analysis pipeline — see experiments/hpi/README.md
+├── 📁 notebooks/                  # Analysis notebooks
+│   ├── ppi_prediction_efficient.ipynb  # Interactive PPI prediction (cache/ is gitignored scratch space)
+│   └── essentiality_prediction.ipynb   # Gene-essentiality prediction for a whole proteome
+├── 📁 tests/                      # Unit tests (pure-Python logic; see Testing below)
+├── 📁 weights/                    # Local pre-trained model weights (gitignored; see Loading Models)
+├── 📁 data/                       # Small bundled artifacts (interactome classifiers) + OrthoDB cache
+└── 📁 img/                        # Documentation images
 ```
+
+## Configuration
+
+Configs are grouped by what they're for, not by model size — `configs/pretraining/` holds base ProteomeLM training configs (`proteomelm.yaml` is the default; `proteomelm_alternate.yaml` drives the learned-OrthoDB-embedding ablation in `proteomelm/alternate/modeling_naive.py`). `configs/hpi_finetuning/base.yaml` is the full HPI LoRA fine-tuning config (ProteomeLM-M, the main run). Its `ablations/` subfolder holds overrides for the ProteomeLM-S ablation grid: `ablations/base.yaml` (settings shared by the grid) and one file per condition (`abl1`–`abl8`: 4 masking regimes × pathogen self-attention block on/off; `abl9`: the expanded dataset). `--config` accepts several files, merged in order (later file wins on key collision):
+
+```bash
+# Base pretraining
+python -m proteomelm.cli train --config configs/pretraining/proteomelm.yaml
+
+# HPI fine-tuning
+python -m proteomelm.hpi.finetune_hpi --config configs/hpi_finetuning/base.yaml
+
+# One HPI ablation condition (full base, then the grid overrides, then the condition)
+python -m proteomelm.hpi.finetune_hpi --config configs/hpi_finetuning/base.yaml \
+    configs/hpi_finetuning/ablations/base.yaml configs/hpi_finetuning/ablations/abl8_seed_total_block.yaml
+```
+
+Scripts that read data from a shared cluster mount (`proteomelm/ppi/config.py`, `experiments/ppi_benchmarks/run_benchmarks.py`) default to `data` — set `PROTEOMELM_DATA_ROOT` to point them at a different machine's data layout without editing code.
 
 ## 🔧 Usage
 
-
 ### Quick Start: Fast PPI prediction
 
-For interactive PPI prediction with multiple data sources, use our comprehensive Jupyter notebook:
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Bitbol-Lab/ProteomeLM/blob/main/notebooks/ppi_prediction_efficient.ipynb)
+
+The notebook [`notebooks/ppi_prediction_efficient.ipynb`](notebooks/ppi_prediction_efficient.ipynb) predicts protein-protein interactions across a whole proteome in minutes. Open it **on Google Colab** with the badge above (pick a GPU runtime; the first cell installs everything), or **locally** from a clone (after the installation above):
 
 ```bash
-# Launch the interactive PPI prediction notebook
-jupyter notebook notebooks/ppi_prediction.ipynb
+pip install -e ".[notebooks]"
+jupyter notebook notebooks/ppi_prediction_efficient.ipynb
 ```
 
-**[Open Notebook](notebooks/ppi_prediction.ipynb)**
+Run the cells from top to bottom; the **Settings** cell is the only one to edit (a form on Colab, plus an optional ipywidgets form in Jupyter). The defaults rank the partners of *rpoB* and *ftsZ* among the ~4,100 proteins of *E. coli* K-12.
 
-The notebook provides a flexible framework supporting:
+- **Proteins**: a STRING organism (by taxon id), your own FASTA file (uploaded on Colab), the reviewed UniProt proteins of a taxon, or a list of UniProt accessions.
+- **What to score**: the best partners of query proteins (gene names or ids), specific pairs, a random sample of pairs, or all pairs.
+- **Scores**: `unsupervised_score` (logistic regression on ProteomeLM attention), optionally `supervised_score` (supervised model on attention + ProteomeLM embeddings) and `string_score` (the pair's STRING score, for comparison).
+- **Figures**: the top partners of each query colored by STRING support, enrichment of STRING links among the top predictions and ROC against STRING, a per-attention-head AUROC heatmap, a partner network, and attention vs supervised scores. Figures that need STRING or a supervised model are skipped when those are off.
+- **Output**: CSV tables of all scored pairs and of the top predictions, plus each figure as PNG and SVG, written to `notebooks/cache/results/` (`./proteomelm_ppi/results/` outside a clone; downloaded automatically on Colab). Downloads and ESM-C embeddings are cached in the same work directory, so re-runs are fast.
 
-**Data Sources:**
-- **Local FASTA files**: Upload your own protein sequences
-- **STRING database**: Download sequences by organism ID (e.g., "9606" for human)
-- **UniProt database**: Download sequences by taxon ID
-- **UniProt IDs**: Fetch specific protein sequences by accession
+ProteomeLM attends over all protein pairs at once, so memory grows with the square of the proteome size (ProteomeLM-S: ~0.6 GB for 4k proteins, ~13 GB for 20k). The notebook checks this before the slow steps and falls back to the CPU when the GPU is too small.
 
-**Key Features:**
-- Automated ProteomeLM feature extraction using attention mechanisms
-- Pre-trained logistic regression models for PPI prediction
-- STRING annotation comparison and evaluation
-- Comprehensive visualization and analysis
+### Host-Pathogen Interaction (HPI) Fine-tuning
+
+`proteomelm/hpi/` fine-tunes a pretrained ProteomeLM (via LoRA) to predict interactions between host and pathogen proteins — a harder setting than intra-species PPI, since there's no coevolutionary signal between host and pathogen to exploit. Training pairs concatenate a host proteome segment with a pathogen proteome segment and mask them **asymmetrically**: the host segment is lightly masked (or not at all) while the pathogen segment is masked heavily, up to entirely, forcing the model to reconstruct pathogen protein representations from host context. An optional `block_pathogen_self_attention` flag prevents pathogen proteins from attending to each other, restricting them to host-mediated context only.
+
+```bash
+python -m proteomelm.hpi.finetune_hpi --config configs/hpi_finetuning/base.yaml
+```
+
+See `experiments/hpi/README.md` for the analysis pipeline that turns a fine-tuned checkpoint into the paper's figures.
 
 ### Gene Essentiality Prediction
 
-TODO
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Bitbol-Lab/ProteomeLM/blob/main/notebooks/essentiality_prediction.ipynb)
+
+[`Bitbol-Lab/ProteomeLM-ess`](https://huggingface.co/Bitbol-Lab/ProteomeLM-ess) is the essentiality classifier of the paper (Fig. 5B): a two-layer head on ProteomeLM-L's layer-8 embeddings, trained on OGEE essentiality data. Given a whole proteome, it gives each protein a probability of being essential. The notebook [`notebooks/essentiality_prediction.ipynb`](notebooks/essentiality_prediction.ipynb) runs it on a UniProt or STRING proteome or on your own FASTA (open it in Colab with the badge above); from a clone or a pip install:
+
+```bash
+python -m proteomelm.essentiality --fasta proteome.fasta --out scores.tsv --top-fraction 0.1   # or --top-n N / --threshold T
+```
+
+The TSV lists every protein with `p_essential`, its `rank` and `predicted_essential`. The probabilities are not calibrated across organisms, so rank-based calls (`--top-n`, `--top-fraction`) are recommended.
+
+`experiments/essentiality/` reproduces the essentiality results of the paper (training per-layer classifiers on frozen ProteomeLM and ESM-C embeddings, evaluation, figures); see [experiments/essentiality/README.md](experiments/essentiality/README.md).
 
 ### Training ProteomeLM
 
 Train a new model from scratch or fine-tune existing weights:
 
 ```bash
-# Using the CLI interface
-python -m proteomelm.cli train --config configs/proteomelm.yaml
+# Using the CLI interface (also installed as `proteomelm-train`)
+python -m proteomelm.cli train --config configs/pretraining/proteomelm.yaml
 
-# Multi-GPU distributed training
-torchrun --nproc_per_node=4 -m proteomelm.cli train \
-    --config configs/proteomelm.yaml \
-    --distributed
+# Multi-GPU training: set `use_one_gpu: "-1"` in the config, then launch with torchrun
+torchrun --nproc_per_node=4 -m proteomelm.cli train --config configs/pretraining/proteomelm.yaml
 
 # Fine-tune from Hugging Face model
-python -m proteomelm.cli train --config configs/proteomelm.yaml --pretrained Bitbol-Lab/ProteomeLM-M \
-
-# Advanced training with custom parameters
-python -m proteomelm.cli train --config configs/proteomelm.yaml
+python -m proteomelm.cli train --config configs/pretraining/proteomelm.yaml --pretrained Bitbol-Lab/ProteomeLM-M
 ```
+
+`--config` accepts several files, merged in order (later file wins). If `output_dir/namedir` already contains a checkpoint, the model weights are loaded from the latest one (even without `--resume`, and in place of `--pretrained`); `--resume` also restores the optimizer, scheduler and step counter.
 
 ### Docker Deployment
 
@@ -182,8 +206,8 @@ For containerized execution:
 docker build -t proteomelm:latest .
 
 # Run training
-docker run --gpus all -v $(pwd):/workspace proteomelm:latest \
-    python train.py --config configs/proteomelm.yaml
+docker run --gpus all -v $(pwd)/data:/app/data proteomelm:latest \
+    python -m proteomelm.cli train --config configs/pretraining/proteomelm.yaml
 ```
 
 ## Loading Models
@@ -201,20 +225,31 @@ model_l = ProteomeLMForMaskedLM.from_pretrained("Bitbol-Lab/ProteomeLM-L")
 model = ProteomeLMForMaskedLM.from_pretrained("weights/ProteomeLM-M")
 ```
 
+## Testing
+
+```bash
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+Coverage is intentionally limited to pure-Python logic that needs no GPU, pretrained weights, or real proteome data — config loading/merging, OrthoDB group-vector file selection, the HPI masking logic, data-collator padding/batching, the supervised PPI head on small random inputs, a strict load of the bundled supervised checkpoints, and the notebook helpers and plots on synthetic data. Anything requiring a ProteomeLM forward pass, ESM-C encoding, OrthoDB downloads, or network access (STRING/UniProt fetches in the notebook helpers, the actual LoRA training loops) is intentionally untested here; that's a documented scope boundary, not an oversight.
+
 ## Citation
 
 If you use ProteomeLM in your research, please cite our paper:
 
 ```bibtex
-@article{malbranke2025proteomelm,
-  title={ProteomeLM: A proteome-scale language model allowing fast prediction of protein-protein interactions and gene essentiality across taxa},
+@article{malbranke2026proteomelm,
+  title={ProteomeLM: A proteome-scale language model enables accurate and rapid prediction of protein-protein interactions and gene essentiality across taxa},
   author={Malbranke, Cyril and Zalaffi, Gionata Paolo and Bitbol, Anne-Florence},
-  journal={bioRxiv},
-  pages={2025.08.01.668221},
-  year={2025},
-  publisher={Cold Spring Harbor Laboratory},
-  doi={10.1101/2025.08.01.668221},
-  url={https://www.biorxiv.org/content/10.1101/2025.08.01.668221v1}
+  journal={Proceedings of the National Academy of Sciences},
+  volume={123},
+  number={21},
+  pages={e2524201123},
+  year={2026},
+  publisher={National Academy of Sciences},
+  doi={10.1073/pnas.2524201123},
+  url={https://www.pnas.org/doi/10.1073/pnas.2524201123}
 }
 ```
 
@@ -232,7 +267,7 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 ## 🔗 Quick Links
 
-- 📄 [Paper on bioRxiv](https://www.biorxiv.org/content/10.1101/2025.08.01.668221v1.abstract)
+- 📄 [Paper on PNAS](https://www.pnas.org/doi/10.1073/pnas.2524201123)
 - 🤗 [Model Collection](https://huggingface.co/collections/Bitbol-Lab/proteomelm-689dc1bbee9afabc10b34931)
 - 📊 [Training Dataset](https://huggingface.co/datasets/Bitbol-Lab/ProteomeLM-dataset)
 - 💻 [Source Code](https://github.com/Bitbol-Lab/ProteomeLM)
@@ -242,6 +277,6 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 <div align="center">
 
-**[⬆ Back to Top](#proteomelm-a-proteome-scale-language-model-for-fast-prediction-of-protein-protein-interactions-and-gene-essentiality-across-taxa)**
+**[⬆ Back to Top](#proteomelm-a-proteome-scale-language-model-allowing-fast-prediction-of-protein-protein-interactions-and-gene-essentiality-across-taxa)**
 
 </div>

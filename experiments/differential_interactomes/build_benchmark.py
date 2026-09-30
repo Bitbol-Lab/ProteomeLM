@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Minimal Benchmark Builder for ProteomeLM Analysis
+Differential-interactome benchmark builder (step 1 of 3)
 
 Approach:
 1. Download full UniProt proteome for species
-2. For PINDER/STRING pairs, match exact UniProt IDs first
-3. If no exact match, use MMseqs2 to find best sequence match
+2. For PINDER/STRING pairs, match exact UniProt IDs first, then gene names
+3. MMseqs2 sequence matching is wired in (resolve_uniprot) but only runs when a
+   sequence is passed, which process_pinder does not do
 
 Interaction types:
 - pdb: Direct contacts from PINDER/PDB (gold standard)
@@ -363,7 +364,7 @@ class BenchmarkBuilder:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build minimal ProteomeLM benchmark")
+    parser = argparse.ArgumentParser(description="Build the differential-interactome benchmark")
     parser.add_argument('--species', default='yeast', choices=list(SPECIES_CONFIG.keys()))
     parser.add_argument('--output-dir', default='data/benchmarks')
     parser.add_argument('--coexp-threshold', type=int, default=900)

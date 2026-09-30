@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-ProteomeLM Minimal Analysis Pipeline
+Differential-interactome analysis (step 3 of 3): reads the attention files from
+extract_attention.py and writes tables and figures.
 
 Produces:
 - Table S1: AUROC for discriminating interaction types from random pairs
@@ -12,13 +13,9 @@ Produces:
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.colors import LinearSegmentedColormap
-import seaborn as sns
-import colorsys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler, normalize
 from sklearn.decomposition import PCA
@@ -26,7 +23,7 @@ from sklearn.model_selection import train_test_split
 import warnings
 warnings.filterwarnings('ignore')
 
-# Match plotting style from nb_plots
+# Plotting style
 plt.rcParams['font.family'] = 'Arial'
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.size'] = 16
@@ -40,17 +37,6 @@ plt.rcParams['figure.titlesize'] = 20
 def style_axes(ax):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-
-def to_colormap(base_color, dark=0.2, light=0.9, name="custom_colormap"):
-    rgb = mcolors.to_rgb(base_color)
-    h, l, s = colorsys.rgb_to_hls(*rgb)
-    colors = [
-        colorsys.hls_to_rgb(h, light, s),
-        colorsys.hls_to_rgb(h, l, s),
-        colorsys.hls_to_rgb(h, dark, s)
-    ]
-    rgb_colors = [mcolors.to_rgb(c) for c in colors]
-    return LinearSegmentedColormap.from_list(name, rgb_colors)
 
 # === CONFIGURATION ===
 SPECIES_LIST = ['ecoli', 'yeast', 'human']
@@ -294,19 +280,6 @@ def compute_pc_removal_auroc_for_embeddings(
         species=species,
         embeddings=modified_embeddings,
         protein_to_idx=protein_to_idx,
-    )
-
-
-def compute_pc_removal_auroc(encodings: Dict, attention_dir: Path, species: str, n_remove: int) -> Dict:
-    """Compute AUROC after removing top n principal components (inputs embeddings)."""
-    embeddings = encodings['inputs_embeds']
-    protein_to_idx = encodings['protein_to_idx']
-    return compute_pc_removal_auroc_for_embeddings(
-        embeddings=embeddings,
-        protein_to_idx=protein_to_idx,
-        attention_dir=attention_dir,
-        species=species,
-        n_remove=n_remove,
     )
 
 
@@ -678,18 +651,6 @@ def plot_pairwise_classification_heads(attention_dir: Path, output_dir: Path):
         print(f"  ✓ {species}: Saved pairwise_classification_heads figures")
 
 
-def to_palette(color, n_colors):
-    """Generate a palette of n_colors from a base color, varying lightness."""
-    rgb = mcolors.to_rgb(color)
-    h, l, s = colorsys.rgb_to_hls(*rgb)
-    delta = 0.3
-    start = max(0, l - delta)
-    end = min(1, l + delta)
-    lightness_vals = [start + i * (end - start) / (n_colors - 1) for i in range(n_colors)]
-    palette = [mcolors.to_hex(colorsys.hls_to_rgb(h, l_val, s)) for l_val in lightness_vals]
-    return palette[::-1]
-
-
 # Species-level colors (matching notebook)
 SPECIES_COLORS = {
     'ecoli':  colorspal6[0],
@@ -720,10 +681,8 @@ def plot_auroc_summary_bars(attention_dir: Path, output_dir: Path):
     ]
     pairwise_labels = [lbl for _, _, lbl in pairwise_comparisons]
 
-    all_labels = vs_random_labels + pairwise_labels
     n_left  = len(vs_random_labels)
     n_right = len(pairwise_labels)
-    n_total = n_left + n_right
     gap = 0.8  # extra space between the two blocks
 
     # x positions with a gap between the two blocks
@@ -750,7 +709,6 @@ def plot_auroc_summary_bars(attention_dir: Path, output_dir: Path):
             continue
 
         color = SPECIES_COLORS[species]
-        palette = to_palette(color, n_total + 1)
 
         vals = []
 
@@ -949,7 +907,7 @@ def print_latex_tables(table_s1: pd.DataFrame, table_s2: pd.DataFrame):
     
     print("\n% Table S2")
     print("\\begin{table}[h]")
-    print("\caption{Pairwise binary classification AUROC between interaction types.}")
+    print("\\caption{Pairwise binary classification AUROC between interaction types.}")
     print("\\label{tab:pairwise_classification}")
     print("\\centering")
     print("\\begin{tabular}{lccc}")
@@ -971,7 +929,7 @@ def print_latex_tables(table_s1: pd.DataFrame, table_s2: pd.DataFrame):
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="ProteomeLM Minimal Analysis Pipeline")
+    parser = argparse.ArgumentParser(description="ProteomeLM differential-interactome analysis")
     parser.add_argument('--attention-dir', type=str, default='attention_patterns',
                        help='Directory containing attention pattern files')
     parser.add_argument('--output-dir', type=str, default='figures_minimal',
@@ -998,7 +956,7 @@ def main():
             available_species.append(species)
     
     if not available_species:
-        print("\n⚠ No attention data found. Run extract_attention_patterns.py first.")
+        print("\n⚠ No attention data found. Run extract_attention.py first.")
         print(f"  Looking in: {attention_dir}")
         return
     

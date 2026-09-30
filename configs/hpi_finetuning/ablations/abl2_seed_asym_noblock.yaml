@@ -1,0 +1,6 @@
+# abl2: seed dataset, asymmetric masking (20% host / 80% pathogen), no block
+namedir: "ProteomeLM-HPI-S-abl2-seed-asym-noblock"
+mode: "0"            # seed split: 530 train / 59 eval pairs
+mask_fraction_H: 0.2
+mask_fraction_P: 0.8
+block_pathogen_self_attention: false

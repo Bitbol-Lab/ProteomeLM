@@ -1,0 +1,7 @@
+# abl8: seed dataset, total pathogen masking (0/100), pathogen self-attention BLOCKED
+# (best condition)
+namedir: "ProteomeLM-HPI-S-abl8-seed-total-block"
+mode: "0"            # seed split: 530 train / 59 eval pairs
+mask_fraction_H: 0.0
+mask_fraction_P: 1.0
+block_pathogen_self_attention: true

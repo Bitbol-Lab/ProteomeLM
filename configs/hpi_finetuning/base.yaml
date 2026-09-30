@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# HPI LoRA fine-tuning — full base config (main run: ProteomeLM-M, total
+# pathogen masking + pathogen self-attention block).
+#
+#   python -m proteomelm.hpi.finetune_hpi --config configs/hpi_finetuning/base.yaml
+#
+# The ablation grid composes this file with ablations/base.yaml and one
+# ablations/ablN_*.yaml (later files win); see ablations/base.yaml.
+#
+# Data paths below are for the training cluster; override for your setup.
+# The model architecture comes from `pretrained_model_path` (HF config.json).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Model
+pretrained_model_path: "Bitbol-Lab/ProteomeLM-M"
+
+# Output: checkpoints go to {output_dir}/{namedir}
+namedir: "ProteomeLM-HPI-M"
+output_dir: "output/"
+# Dataset split mode: subdirectory of pair_shards_dir ("0" = seed split)
+mode: "0"
+
+# GPU index pinned via CUDA_VISIBLE_DEVICES ("-1" = do not restrict, e.g. under torchrun)
+use_one_gpu: "0"
+
+# ── Training schedule ──────────────────────────────────────────────────────
+num_epochs: 20
+max_steps: 80000
+batch_size: 4
+gradient_accumulation_steps: 1
+eval_accumulation_steps: 1
+
+# ── Logging / checkpointing ────────────────────────────────────────────────
+logging_steps: 10
+eval_steps: 500
+save_steps: 500
+enable_eval_during_training: false   # BigDataset eval is slow; eval offline
+eval_on_start: false
+deterministic_eval: true
+compute_eval_metrics: true
+
+# ── Optimizer ─────────────────────────────────────────────────────────────
+learning_rate: 0.00001
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.005
+scheduler: "cosine"
+warmup_steps: 500
+max_grad_norm: 0.5
+
+# ── Dataset ───────────────────────────────────────────────────────────────
+# Pre-processed pair shards: {pair_shards_dir}/{mode}/{train,eval}/shard_*.pkl
+# (+ metadata.json). One entry per (host, pathogen) pair; bfloat16 tensors;
+# masking applied at runtime. The shard builder is not part of this repository.
+pair_shards_dir: "data/hpi/pair_shards"
+dataloader_num_workers: 0
+
+# ── Loss ─────────────────────────────────────────────────────────────────
+loss_choice: "polar"
+
+# ── LoRA ─────────────────────────────────────────────────────────────────
+lora_r: 32
+lora_alpha: 128
+lora_dropout: 0.1
+lora_target_modules: ["q_lin", "k_lin", "v_lin", "out_lin"]
+lora_bias: "none"
+
+# ── WandB ─────────────────────────────────────────────────────────────────
+wandb_project: "proteomelm-hpi-ablations"
+
+# ── Masking / attention block (overridden by the ablation condition files) ─
+mask_fraction_H: 0.0
+mask_fraction_P: 1.0
+block_pathogen_self_attention: true
