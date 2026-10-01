@@ -2,6 +2,10 @@
 
 Stages (see ``run_all.py``):
 
+* ``fetch``: download the processed data from the Hugging Face dataset
+  ``Bitbol-Lab/ProteomeLM-ess-data`` (OGEE tables, labelled duplicate-free proteomes,
+  fold assignment, minimal-cell labels) and write the files that ``download``,
+  ``labels`` and ``split`` would produce. Replaces those three stages.
 * ``download``: proteomes for every OGEE genome (UniProt reference proteome, else
   UniProtKB, else NCBI/custom sources), merged into ``all_sequences_folder``.
   Needs network access, ``gdown`` (OGEE files are mirrored on Google Drive) and the
@@ -36,7 +40,7 @@ from Bio import SeqIO
 from requests.adapters import HTTPAdapter, Retry
 from requests.structures import CaseInsensitiveDict
 
-from experiments.essentiality.common import load_config, splits_filename
+from experiments.essentiality.common import DATA_REPO, load_config, splits_filename
 
 re_next_link = re.compile(r'<(.+)>; rel="next"')
 retries = Retry(total=5, backoff_factor=0.25, status_forcelist=[500, 502, 503, 504])
@@ -363,7 +367,8 @@ def get_dataset_info_df(ogee_data_directory: str | os.PathLike) -> pd.DataFrame:
         ogee_data_directory: where to save the data
     """
     
-    # Download the OGEE data previously saved on google drive (because the OGEE website has an expired certificate)
+    # The OGEE website is unavailable: the tables come from the Hugging Face dataset, with the
+    # original Google Drive mirror as a fallback.
     os.makedirs(ogee_data_directory, exist_ok=True)
 
     ogee_filenames = {"gene_essentiality.txt": "19a_33lnOZ0X8DCB6DL-bKNUtMnmRVO7o",
@@ -373,7 +378,13 @@ def get_dataset_info_df(ogee_data_directory: str | os.PathLike) -> pd.DataFrame:
     for file, google_drive_id in ogee_filenames.items():
         file_fullpath = os.path.join(ogee_data_directory, file)
         if not os.path.exists(file_fullpath):
-            _import_gdown().download(id=google_drive_id, output=file_fullpath)
+            try:
+                from huggingface_hub import hf_hub_download
+                shutil.copyfile(hf_hub_download(DATA_REPO, f"{OGEE_HUB_DIR}/{file}", repo_type="dataset"),
+                                file_fullpath)
+            except Exception as e:
+                print(f"Could not get {file} from {DATA_REPO} ({e}); trying the Google Drive mirror")
+                _import_gdown().download(id=google_drive_id, output=file_fullpath)
             
     # Import the datasets info data using pandas
     dataset_info_df = pd.read_csv(ogee_data_directory+"/datasets.txt", sep="\t", encoding_errors="replace", usecols=["datasetID", "taxID", "url"])
@@ -1171,6 +1182,104 @@ def split_for_crossval(input_file: str, output_file: str, mmseqs_dir: str, thres
 
 
 # --------------------------
+# Processed data on the Hugging Face Hub (stage `fetch`)
+# --------------------------
+
+OGEE_HUB_DIR = "raw/ogee_v3"
+OGEE_FILES = ("gene_essentiality.txt", "genes.txt", "datasets.txt")
+MINIMAL_CELL_TAXIDS = (766747, 2144189)  # JCVI-Syn1.0, JCVI-Syn3A
+
+
+def _write_fasta(path: str, headers: Sequence[str], sequences: Sequence[str]) -> None:
+    with open(path, "w") as f:
+        for header, sequence in zip(headers, sequences):
+            f.write(f">{header}\n{sequence}\n")
+
+
+def write_pipeline_files(proteins: pd.DataFrame, fasta_folder: str, label_folder: str,
+                         overwrite: bool = False) -> List[int]:
+    """Write the duplicate-free FASTAs and ``labeled_essentiality_taxid{t}.pkl`` files of the
+    ``labels`` stage from the ``proteins`` table of the dataset (one row per protein, in FASTA
+    order). Existing files are kept unless ``overwrite``. Returns the taxids written."""
+    os.makedirs(fasta_folder, exist_ok=True)
+    os.makedirs(label_folder, exist_ok=True)
+    written = []
+    for taxid, genome in proteins.groupby("taxid", sort=False):
+        taxid = int(taxid)
+        fasta_path = os.path.join(fasta_folder, genome["fasta_file"].iloc[0])
+        label_path = os.path.join(label_folder, f"labeled_essentiality_taxid{taxid}.pkl")
+        if not overwrite and os.path.exists(fasta_path) and os.path.exists(label_path):
+            continue
+        _write_fasta(fasta_path, genome["header"], genome["sequence"])
+        labels = {}
+        for row in genome.itertuples(index=False):
+            labels[row.protein_id] = {"tax id": taxid,
+                                      "gene": row.gene,
+                                      "synonims": None if row.synonyms is None else list(row.synonyms),
+                                      # missing OGEE calls are NaN in the original pickles (null in parquet)
+                                      "Essentiality": [float("nan") if c is None else c for c in row.ogee_calls]}
+        with open(label_path, "wb") as f:
+            pickle.dump(labels, f)
+        written.append(taxid)
+    return written
+
+
+def write_split(proteins: pd.DataFrame, path: str) -> None:
+    """Fold pickle (``{protein_id: fold}``) of the ``split`` stage."""
+    with open(path, "wb") as f:
+        pickle.dump({pid: int(fold) for pid, fold in zip(proteins["protein_id"], proteins["fold"])}, f)
+
+
+def write_minimal_cells(minimal_cells: pd.DataFrame, folder: str) -> None:
+    """NCBI proteomes (``ncbi_data_taxid{t}.fasta``) and per-protein labels
+    (``minimalcell_taxid{t}_labels.tsv``, read by ``evaluate.GetMinimalCellLabels``)."""
+    os.makedirs(folder, exist_ok=True)
+    for taxid, genome in minimal_cells.groupby("taxid", sort=False):
+        fasta_path = os.path.join(folder, f"ncbi_data_taxid{int(taxid)}.fasta")
+        if not os.path.exists(fasta_path):
+            _write_fasta(fasta_path, genome["header"], genome["sequence"])
+        genome[["protein_id", "label"]].to_csv(
+            os.path.join(folder, f"minimalcell_taxid{int(taxid)}_labels.tsv"), sep="\t", index=False)
+
+
+def run_fetch(cfg, repo_id: str = DATA_REPO, revision: Optional[str] = None) -> str:
+    """Download the dataset and write the inputs of the ``train``/``evaluate``/``figures`` stages.
+    Returns the path of the fold pickle."""
+    from huggingface_hub import snapshot_download
+    p, s = cfg["paths"], cfg["split"]
+    local = snapshot_download(repo_id, repo_type="dataset", revision=revision)
+    with open(os.path.join(local, "data", "info.json")) as f:
+        info = json.load(f)
+
+    os.makedirs(p["ogee_data_dir"], exist_ok=True)
+    for name in OGEE_FILES:
+        target = os.path.join(p["ogee_data_dir"], name)
+        if not os.path.exists(target):
+            shutil.copyfile(os.path.join(local, OGEE_HUB_DIR, name), target)
+
+    proteins = pd.read_parquet(os.path.join(local, "data", "proteins.parquet"))
+    written = write_pipeline_files(proteins, p["fasta_folder"], p["label_folder"])
+    print(f"{proteins['taxid'].nunique()} genomes, {len(proteins)} proteins "
+          f"({len(written)} genomes written to {p['fasta_folder']} and {p['label_folder']})")
+
+    if info["split_threshold"] != s["threshold"] or info["n_splits"] != s["n_splits"]:
+        print(f"Warning: the dataset split ({info['split_threshold']}% identity, {info['n_splits']} folds) "
+              f"differs from the config ({s['threshold']}%, {s['n_splits']} folds)")
+    split_path = os.path.join(p["splits_folder"], splits_filename(s["prefix"], info["split_threshold"],
+                                                                  info["split_seed"]))
+    if not os.path.exists(split_path):
+        write_split(proteins, split_path)
+    if info["split_seed"] != s["seed"]:
+        print(f"Note: the dataset split has seed {info['split_seed']}; pass --split-seed {info['split_seed']} "
+              f"(config: {s['seed']}), or run the `split` stage for another seed")
+    print(f"Split: {split_path}")
+
+    write_minimal_cells(pd.read_parquet(os.path.join(local, "data", "minimal_cells.parquet")),
+                        p["minimalcell_folder"])
+    return split_path
+
+
+# --------------------------
 # Command line
 # --------------------------
 
@@ -1219,7 +1328,7 @@ def run_split(cfg, split_seed: Optional[int] = None, mmseqs: str = "mmseqs", thr
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("step", choices=["download", "labels", "split"])
+    parser.add_argument("step", choices=["fetch", "download", "labels", "split"])
     parser.add_argument("--data-dir", default=None, help="Root of all data paths (default DATA_ROOT/essentiality)")
     parser.add_argument("--config", default=None, help="Config YAML (default: config.yaml next to this file)")
     parser.add_argument("--split-seed", type=int, default=None, help="Split seed (default: config)")
@@ -1227,9 +1336,13 @@ def main(argv=None):
     parser.add_argument("--threads", type=int, default=24)
     parser.add_argument("--cluster-tsv", default=None, help="Reuse an existing mmseqs *_cluster.tsv")
     parser.add_argument("--max-workers", type=int, default=12, help="Processes for the `labels` step")
+    parser.add_argument("--repo", default=DATA_REPO, help="Hugging Face dataset (`fetch` step)")
+    parser.add_argument("--revision", default=None, help="Dataset revision (`fetch` step)")
     args = parser.parse_args(argv)
     cfg = load_config(args.config, args.data_dir)
-    if args.step == "download":
+    if args.step == "fetch":
+        run_fetch(cfg, repo_id=args.repo, revision=args.revision)
+    elif args.step == "download":
         run_download(cfg)
     elif args.step == "labels":
         run_labels(cfg, max_workers=args.max_workers)

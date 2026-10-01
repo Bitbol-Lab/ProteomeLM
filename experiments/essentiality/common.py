@@ -20,6 +20,8 @@ CHECKPOINTS = ("ESMC",) + PLM_SIZES
 WEIGHTS = ("trained", "random", "statistics")
 MODEL_IDS = {1: "simpleclassifier", 2: "2layer", 3: "3layer"}
 HF_REPO = "Bitbol-Lab/ProteomeLM-{size}"
+# Hugging Face dataset with the OGEE tables, labelled proteomes, split and minimal-cell labels
+DATA_REPO = "Bitbol-Lab/ProteomeLM-ess-data"
 # Layout of local checkpoints (--checkpoint-dir), as on the original server
 LOCAL_CHECKPOINT = "ProteomeLM-{size}/checkpoint-210"
 BASELINE_CHECKPOINT = "ProteomeLM-{size}-{weights}-seed{seed}"
