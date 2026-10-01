@@ -17,7 +17,7 @@ per-protein hidden states over the OGEE genomes. This folder reproduces:
 | file | role |
 |---|---|
 | `config.yaml` | final published configuration + data layout (paths relative to `--data-dir`) |
-| `data.py` | `download`, `labels`, `split` (mmseqs2 40% clusters → 5 folds: 0 test, 1 val, 2–4 train) |
+| `data.py` | `fetch` (processed data from Hugging Face), or `download`, `labels`, `split` (mmseqs2 40% clusters → 5 folds: 0 test, 1 val, 2–4 train) |
 | `train.py` | ESM-C + ProteomeLM embeddings, per-layer classifiers, `make-baselines` |
 | `evaluate.py` | test-fold metric pickles; whole-genome predictions for Fig. 5B |
 | `figures.py` | `fig5a`, `fig5b`, `baselines`, `depth`, `interpretability` |
@@ -26,27 +26,36 @@ per-protein hidden states over the OGEE genomes. This folder reproduces:
 
 ## Requirements
 
-The `proteomelm` environment, plus: `mmseqs` (split), `gdown` (OGEE tables, Syn1.0 labels
-and one Fitness Browser table are mirrored on Google Drive), the NCBI
+The `proteomelm` environment, plus `dadapy` (interpretability), `ncbi-taxonomist`
+(superkingdoms in the interpretability figures) and, for the notebook only, `evo-model` in
+its own environment. `wandb` is optional (`--wandb`). Rebuilding the data from the sources
+(`data`, `split`) instead of `fetch` also needs `mmseqs` (split), `gdown` (Syn1.0 labels and
+one Fitness Browser table are mirrored on Google Drive) and the NCBI
 [`datasets` CLI](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/command-line-tools/download-and-install/)
-(`$NCBI_DATASETS`, else `~/datasets`, else on `PATH`), `dadapy` (interpretability),
-`ncbi-taxonomist` (superkingdoms in the interpretability figures) and, for the notebook
-only, `evo-model` in its own environment. `wandb` is optional (`--wandb`).
+(`$NCBI_DATASETS`, else `~/datasets`, else on `PATH`).
 
 ## Data
 
 Everything lives under `--data-dir` (default `$PROTEOMELM_DATA_ROOT/essentiality`) with the
-file names of the original server, so an existing data folder is reused as is:
+file names of the original server, so an existing data folder is reused as is.
 
-- **OGEE** `gene_essentiality.txt`, `genes.txt`, `datasets.txt` → `ogee_data/` (Google Drive
-  mirror, IDs in `data.get_dataset_info_df`; the OGEE site's certificate had expired).
+The processed data are on Hugging Face:
+[`Bitbol-Lab/ProteomeLM-ess-data`](https://huggingface.co/datasets/Bitbol-Lab/ProteomeLM-ess-data)
+(OGEE v3 tables, the 89 labelled proteomes, the fold assignment and the minimal-cell labels;
+CC BY 3.0, from [OGEE](https://doi.org/10.1093/nar/gkaa884)). `run_all fetch` downloads them
+and writes the files below, in place of the `data` and `split` stages. To rebuild them from
+the sources instead:
+
+- **OGEE** `gene_essentiality.txt`, `genes.txt`, `datasets.txt` → `ogee_data/` (from the
+  Hugging Face dataset, else a Google Drive mirror; the OGEE website is unavailable).
 - **Proteomes** → `all_fasta3/`: UniProt reference proteomes (FTP), else UniProtKB (REST), else
   NCBI (`datasets`). Custom sources: SGD `orf_trans.fasta.gz` (yeast), Fitness Browser
   `orgSeqs.cgi` (6 bacteria), fixed NCBI accessions (`data.get_data_from_othersources`).
 - **Labels** → `label_to_ess7/labeled_essentiality_taxid{t}.pkl` and duplicate-free
   FASTAs → `all_fasta_noduplicates2/`.
 - **Minimal cells** → `inference_data/minimalcell/`: NCBI proteomes, SynWiki (Syn3A) and
-  Hutchison et al. 2016 Database S1 (Syn1.0), downloaded on first use.
+  Hutchison et al. 2016 Database S1 (Syn1.0), downloaded on first use (`fetch` writes
+  `minimalcell_taxid{t}_labels.tsv` instead).
 - **Evo comparison**: SGD `S288C_reference_genome_R64-5-1_20240529` (genome release
   tarball) and `saccharomyces_cerevisiae.gff`, unpacked into `data/comparison_data/`.
 
@@ -54,7 +63,8 @@ file names of the original server, so an existing data folder is reused as is:
 
 ```bash
 PY="python -m experiments.essentiality"          # run from the repo root
-$PY.run_all data split                           # download + labels, then the 40% cluster split
+$PY.run_all fetch                                # processed data from Hugging Face
+# or: $PY.run_all data split                     # download + labels, then the 40% cluster split
 $PY.run_all train evaluate --gpus 0,1 --max-jobs 6   # ESMC,XS,S,M,L x seeds 42-47 x 1/2 layers
 $PY.run_all figures                              # Fig. 5A (2- and 1-layer) and Fig. 5B
 $PY.run_all baselines interpretability           # SI

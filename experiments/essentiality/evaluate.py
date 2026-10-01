@@ -418,7 +418,9 @@ def auroc_on_labelled(labels: dict, scores: dict) -> float:
 
 class GetMinimalCellLabels:
     """Essentiality labels of the minimal cells: JCVI-Syn3A (SynWiki) and JCVI-Syn1.0
-    (Hutchison et al. 2016, Science, Database S1, mirrored on Google Drive)."""
+    (Hutchison et al. 2016, Science, Database S1, mirrored on Google Drive). When
+    ``minimalcell_taxid{t}_labels.tsv`` exists (written by ``data fetch``), its labels
+    are used instead of the source tables."""
 
     def __init__(self):
         self.minimalcells_info = {
@@ -467,16 +469,23 @@ class GetMinimalCellLabels:
     def __call__(self, taxid, folder_path, fasta_file, return_all_counts=False, return_gene_to_labels=False):
         assert taxid in self.minimalcells_info, f"Taxid {taxid} not implemented yet"
         info = self.minimalcells_info[taxid]
-        essentiality_df = self.get_ess_df(taxid, folder_path)
+        labels_tsv = os.path.join(folder_path, f"minimalcell_taxid{taxid}_labels.tsv")
+        if os.path.exists(labels_tsv):
+            stored = pd.read_csv(labels_tsv, sep="\t", dtype=str).set_index("protein_id")["label"].to_dict()
+        else:
+            stored, essentiality_df = None, self.get_ess_df(taxid, folder_path)
         labels = {}
         stats = {key: 0 for key in set(info["PossibleLabels"].values())}
         for record in SeqIO.parse(fasta_file, format="fasta"):
-            try:
-                ess = essentiality_df.loc[essentiality_df[info["LocusColumn"]] == record.id,
-                                          info["EssentialColumn"]].values[0]
-                ess = info["PossibleLabels"][ess]
-            except Exception:
-                ess = "No_label"
+            if stored is not None:
+                ess = stored.get(record.id, "No_label")
+            else:
+                try:
+                    ess = essentiality_df.loc[essentiality_df[info["LocusColumn"]] == record.id,
+                                              info["EssentialColumn"]].values[0]
+                    ess = info["PossibleLabels"][ess]
+                except Exception:
+                    ess = "No_label"
             labels[record.id] = ess
             stats[ess] += 1
         coarse_stats = {"E": 0, "NE": 0, "QE": 0, "Other": 0}

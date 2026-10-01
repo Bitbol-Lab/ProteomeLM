@@ -4,6 +4,9 @@
 
 Stages, in pipeline order:
 
+* ``fetch``: download the processed data (labelled proteomes, fold assignment,
+  minimal-cell labels) from the Hugging Face dataset ``Bitbol-Lab/ProteomeLM-ess-data``.
+  Replaces ``data`` and ``split``; not part of ``all``.
 * ``data``: download proteomes + OGEE labels, write labels and duplicate-free FASTAs.
 * ``split``: mmseqs2 clustering at 40% identity + seeded 5-fold split (whole clusters per fold).
 * ``train``: embed all genomes (ESM-C first, then each ProteomeLM), then train one
@@ -127,7 +130,7 @@ def figure_job(args, name, figure, extra=(), gpu=None) -> Job:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    parser.add_argument("stages", nargs="+", choices=STAGES + ["all"])
+    parser.add_argument("stages", nargs="+", choices=["fetch"] + STAGES + ["all"])
     parser.add_argument("--data-dir", default=None, help="Root of all data paths (default DATA_ROOT/essentiality)")
     parser.add_argument("--config", default=None)
     parser.add_argument("--checkpoint-dir", default=None,
@@ -151,11 +154,13 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="Print the commands without running them")
     args = parser.parse_args(argv)
 
-    stages = STAGES if "all" in args.stages else [s for s in STAGES if s in args.stages]
+    stages = STAGES if "all" in args.stages else [s for s in ["fetch"] + STAGES if s in args.stages]
     cfg = load_config(args.config, args.data_dir)
     runner = Runner([int(g) for g in args.gpus.split(",")], args.max_jobs, cfg["paths"]["logs_folder"], args.dry_run)
     plm_checkpoints = [c for c in args.checkpoints if c != "ESMC"]
 
+    if "fetch" in stages:
+        runner.run([Job("data_fetch", "data", ["fetch"] + _data_args(args))])
     if "data" in stages:
         runner.run([Job("data_download", "data", ["download"] + _data_args(args)),
                     Job("data_labels", "data", ["labels"] + _data_args(args))], parallel=False)

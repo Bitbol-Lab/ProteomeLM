@@ -178,7 +178,7 @@ python -m proteomelm.essentiality --fasta proteome.fasta --out scores.tsv --top-
 
 The TSV lists every protein with `p_essential`, its `rank` and `predicted_essential`. The probabilities are not calibrated across organisms, so rank-based calls (`--top-n`, `--top-fraction`) are recommended.
 
-`experiments/essentiality/` reproduces the essentiality results of the paper (training per-layer classifiers on frozen ProteomeLM and ESM-C embeddings, evaluation, figures); see [experiments/essentiality/README.md](experiments/essentiality/README.md).
+`experiments/essentiality/` reproduces the essentiality results of the paper (training per-layer classifiers on frozen ProteomeLM and ESM-C embeddings, evaluation, figures); see [experiments/essentiality/README.md](experiments/essentiality/README.md). Its data (OGEE v3 labels on 89 proteomes, with the cross-validation folds) are on Hugging Face: [`Bitbol-Lab/ProteomeLM-ess-data`](https://huggingface.co/datasets/Bitbol-Lab/ProteomeLM-ess-data).
 
 ### Training ProteomeLM
 
@@ -224,15 +224,6 @@ model_l = ProteomeLMForMaskedLM.from_pretrained("Bitbol-Lab/ProteomeLM-L")
 # From local weights (after git clone)
 model = ProteomeLMForMaskedLM.from_pretrained("weights/ProteomeLM-M")
 ```
-
-## Testing
-
-```bash
-pip install -e ".[dev]"
-pytest tests/ -v
-```
-
-Coverage is intentionally limited to pure-Python logic that needs no GPU, pretrained weights, or real proteome data — config loading/merging, OrthoDB group-vector file selection, the HPI masking logic, data-collator padding/batching, the supervised PPI head on small random inputs, a strict load of the bundled supervised checkpoints, and the notebook helpers and plots on synthetic data. Anything requiring a ProteomeLM forward pass, ESM-C encoding, OrthoDB downloads, or network access (STRING/UniProt fetches in the notebook helpers, the actual LoRA training loops) is intentionally untested here; that's a documented scope boundary, not an oversight.
 
 ## Citation
 
